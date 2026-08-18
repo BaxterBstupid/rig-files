@@ -7,6 +7,54 @@ Last updated: 2026-08-17 (session: framework + RTAB scoping)
 > Every entry carries PROVENANCE (vetted? when? where?) so nothing is trusted blindly.
 
 ═══════════════════════════════════════════════════════════════════════════
+## 0. START HERE — COLD-READER ONBOARDING (read this first every new session)
+═══════════════════════════════════════════════════════════════════════════
+WHAT THIS PROJECT IS: a handheld capture rig that 3D-maps rooms/spaces for film-set
+predictive lighting. Hardware: NVIDIA Jetson Orin Nano (small Linux computer, ROS2
+Humble) + Unitree L2 LiDAR (spinning laser scanner, gives 3D point clouds + has a
+built-in IMU motion sensor) + an Arducam B0578 camera (for colour, USB). Goal chain:
+LiDAR+camera → calibrated fusion → RTAB-Map SLAM (builds a 3D map while you move) →
+textured mesh → Unreal Engine relighting. The user assembles/operates the physical rig
+and runs ALL machine commands (the assistant has a separate Linux sandbox and CANNOT
+touch the Jetson — it reasons, writes code/docs, and analyzes data the user pastes/uploads).
+
+WORKING STYLE (critical, the user insists on this): ONE STEP AT A TIME, proven before
+moving on. NO menus of overlapping commands. COLD PREP before any "hot window" (LiDAR on)
+because the L2 is heat-sensitive and every rig-minute costs. When the user asks a question,
+answer THAT question. Be honest — this project's whole history is about catching CONFIDENT
+WRONG ANSWERS, so never fake certainty; say what's proven vs assumed.
+
+FILE TRANSFER TO/FROM JETSON: via GitHub repo github.com/BaxterBstupid/rig-files (public).
+Assistant delivers a file → user uploads to repo → on Jetson: wget -O ~/FILE
+"https://raw.githubusercontent.com/BaxterBstupid/rig-files/main/FILE". This MASTER_REFERENCE
+lives in that repo too; user pastes its raw URL at session start so the assistant can fetch
+current state. (Direct chat uploads sometimes come through blank — if so, the file is still
+on disk at /mnt/user-data/uploads/ and the assistant can read it with a tool.)
+
+CURRENT STATE IN ONE PARAGRAPH (as of 2026-08-18): Intrinsics ✅, extrinsic ✅ (both
+calibrated + vetted), fusion node ✅ (colour lands on geometry when static). RTAB-Map is
+installed + healthy and HAS BUILT ITS FIRST 3D MAP (LiDAR-only, high quality, 16mm
+precision) — this is the big recent milestone. Temporal calibration (tau, the camera-LiDAR
+time offset) is NOT solved but only matters for COLOUR during motion, NOT for LiDAR geometry.
+IMU-into-odometry was attempted and paused (TF issue, see 7C) — not needed for good maps.
+NEXT: bench refinement (add camera colour), then mobilize the rig (mounts being built) to
+walk-and-map. Camera upgrade (to a hardware-triggered model that kills tau) is planned —
+see 7B for the if/then branch.
+
+>>> NEXT SESSION STARTS HERE: Item 2 — COLD-PREP CAMERA COLOUR integration.
+   Cold research (no rig): how rtabmap_sync's `rgbd_sync` node fuses the mono B0578
+   image (/image_raw) + LiDAR cloud into a coloured RGBD input for RTAB-Map; the exact
+   additions to lidar3d.launch.py (the `rgbd_image_topic` arg feeds rtabmap; needs
+   camera_info with the vetted intrinsics + the extrinsic TF camera↔lidar); then a
+   prepped one-shot bench attempt. Goal: COLOURED maps (currently geometry-only).
+   Note: colour-on-motion is limited by unsolved tau (fine for slow captures; trigger
+   camera fixes it later, see 7B). See also section 7B step 3.
+
+HOW TO READ THIS DOC: sections 1-6 are lookup tables (hardware, calibration values, nodes,
+files, data, gotchas). Section 7 = stage dashboard. 7B = camera-branch plan. 7C = IMU
+detailed status. 8 = session log. Narrative history is in PLAN_NEXT_SESSION.md.
+
+═══════════════════════════════════════════════════════════════════════════
 ## 1. HARDWARE FACTS
 ═══════════════════════════════════════════════════════════════════════════
 
@@ -202,9 +250,128 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
 | Fusion node (static) | ✅ live-verified (colour on geometry) |
 | Temporal (tau) | ⏳ BLOCKED on clean capture (rough ~175ms known) |
 | RTAB-Map install | ✅ DONE + healthy (surprise) |
-| RTAB-Map first map | ✅ DONE 2026-08-18: LiDAR-only SLAM, map built+saved (milestone_map_20260818.db, 5.1MB, 387+ nodes) |
+| RTAB-Map first map | ✅ DONE 2026-08-18: LiDAR-only SLAM, map built+saved (milestone_map_20260818.db, 5.1MB, 387+ nodes). Quality HIGH (16mm precision). |
+| RTAB-Map IMU odometry | ⏸ ATTEMPTED, PAUSED (missing static TF, see 7C). Not needed — LiDAR-only excellent. |
+| RTAB-Map color/traverse | ⬜ NEXT bench: B0578 colour (sec 7B) + walk-a-path needs mobilization |
 | Camera upgrade | ⬜ researching (trigger camera → kills tau) |
 | Downstream (mesh/UE/relight) | ⬜ after first maps |
+
+═══════════════════════════════════════════════════════════════════════════
+## 7B. CAMERA INTEGRATION BRANCH (if/then — the plan forks on the camera)
+═══════════════════════════════════════════════════════════════════════════
+Color-on-geometry during MOTION needs tau handled. LiDAR geometry does NOT (stands
+alone). So the camera plan forks:
+
+### CURRENT STATE — using Arducam B0578 to REFINE THE APPROACH
+The B0578 (USB2 UVC, NO hardware trigger) is the bench camera. Use it to build and
+prove the COLOUR PIPELINE (rgbd_sync → project image onto cloud → export coloured
+map). This plumbing is CAMERA-AGNOSTIC and transfers to any future camera.
+  - DO: integrate B0578 for colour at the bench (proves pipeline, colours
+    slow/careful captures well).
+  - ACCEPT: moving-colour is only APPROXIMATE (software tau ~175ms, unsolved-precise).
+  - DON'T: over-invest in perfecting B0578 moving-colour — it's replaced below.
+  - Geometry maps (LiDAR-only) are already clean and need none of this.
+
+### IF the new (triggered) camera ARRIVES → THEN switch approach:
+Trigger camera (e.g. Arducam IMX900 USB3 or AR0234 MIPI — see CAMERA_OPTIONS.md)
+ELIMINATES tau by construction (Jetson GPIO triggers exposure at a known instant).
+When it arrives:
+  1. VERIFY trigger + framerate coexist for the exact model (email Arducam; trigger
+     rate BECOMES framerate; confirm below-free-run works). See CAMERA_OPTIONS.md.
+  2. RE-CALIBRATE via CALIBRATION_FRAMEWORK.md: new intrinsics (Stage 1) + new
+     extrinsic (Stage 2). Camera-agnostic framework — re-run, don't re-invent.
+  3. WIRE Jetson-GPIO trigger → camera trigger pin. tau ≈ 0 by construction.
+     (Build+sandbox the trigger PAIRING/verify logic — camera-independent — but
+     defer the pulse-generation code until the model's trigger spec is known.)
+  4. VERIFY tau≈0 with the existing velocity-xcorr tool (should return ~0) AND the
+     motion overlay (colour tracks board through motion).
+  5. The COLOUR PIPELINE built with the B0578 CARRIES OVER unchanged — just swap the
+     camera + new YAMLs. Now moving-colour is CLEAN (no software tau needed).
+  => Net: B0578 work is NOT wasted — it proves the pipeline; the trigger camera
+     finishes moving-colour.
+
+### Bench-refinement order (where camera fits):
+  1. IMU into odometry (no camera)  2. Density/accumulation (no camera)
+  3. B0578 colour integration (proves pipeline)  4. Waveshare touch UI (wraps it)
+  5. Mobilize + walk (geometry + approximate colour)  6. Trigger camera → clean colour
+
+═══════════════════════════════════════════════════════════════════════════
+## 7C. IMU INTEGRATION — DETAILED STATUS (attempted 2026-08-18, PAUSED, not solved)
+═══════════════════════════════════════════════════════════════════════════
+FOR A COLD READER: this documents an attempt to add the LiDAR's built-in IMU to the
+RTAB-Map odometry, why it failed, and exactly how to fix it next time. Nothing here is
+required for basic mapping — LiDAR-ONLY mapping WORKS and is the proven baseline.
+
+### WHY WE WANTED THE IMU
+RTAB-Map builds maps two ways at once: (1) ODOMETRY = tracking how the rig moves through
+space (via ICP = Iterative Closest Point, matching consecutive LiDAR scans), and (2)
+MAPPING = assembling those scans into a map. The IMU (a 251Hz motion sensor inside the
+Unitree L2) can help the odometry track better through rotations/fast motion. It is an
+ENHANCEMENT, not a requirement.
+
+### WHAT WE CONFIRMED WORKS (cold-checkable facts)
+- `ros2 pkg list | grep madgwick` → `imu_filter_madgwick` IS installed (a filter that
+  computes orientation from raw IMU rates; turned out we didn't need it — see below).
+- The L2 IMU (`/unilidar/imu`, frame `unilidar_imu`, ~249Hz) PUBLISHES REAL ORIENTATION
+  directly. Checked via `ros2 topic echo /unilidar/imu --once`: the `orientation`
+  quaternion had live values (e.g. x0.704 y-0.024 z-0.707 w0.015) that CHANGED when the
+  rig was tilted (tilt test: became x0.697 y-0.135 z-0.695 w-0.096). `orientation_covariance`
+  first value was 0.0 (NOT -1), meaning orientation IS provided. So we did NOT need the
+  madgwick filter — the IMU gives orientation itself. (This was "Branch A" in the prep.)
+- `linear_acceleration x: 9.66` = gravity on the x-axis (makes sense: L2 mounted 90°, so
+  gravity lands on x not z). Confirms the accelerometer is live/correct.
+
+### WHAT FAILED, AND THE EXACT ERROR
+Command tried (adds IMU to the working LiDAR-only launch):
+    ros2 launch rtabmap_examples lidar3d.launch.py \
+        lidar_topic:=/unilidar/cloud frame_id:=unilidar_lidar imu_topic:=/unilidar/imu
+Result: repeated ERRORS, odometry aborts every update. Two linked errors:
+  1. `"guess_from_tf" is true, but guess cannot be computed between frames
+     "unilidar_lidar_stabilized" -> "unilidar_lidar". Aborting odometry update...`
+  2. `Could not transform IMU msg from frame "unilidar_imu" to frame "unilidar_lidar",
+     TF is not available ... (if TF between camera/lidar and the IMU is static, you can
+     safely ignore this warning and set always_check_imu_tf to false).`
+
+### ROOT CAUSE (traced through the launch file source — see lidar3d_launch_copy on Jetson)
+Two problems, both about missing TF (coordinate-frame transforms):
+  (a) NO STATIC TRANSFORM is published between `unilidar_lidar` and `unilidar_imu`. They
+      are both inside the L2 unit at a fixed offset, but ROS was never told their spatial
+      relationship, so it can't relate IMU data to LiDAR data.
+  (b) When an IMU is supplied, the launch AUTO-CREATES a `unilidar_lidar_stabilized` frame
+      (a gravity-levelled frame for "deskewing" = correcting motion distortion within a
+      scan). It launches an `imu_to_tf` node to generate that frame and a `lidar_deskewing`
+      node to use it. These hit a TF timing/extrapolation race at startup.
+
+### WHAT WE TRIED AND LEARNED
+- `deskewing:=false` (default is `true`): launched with NO red errors at first (the
+  `lidar_deskewing` node is skipped). BUT the `unilidar_lidar_stabilized` frame is STILL
+  created regardless of deskewing (code: `if not fixed_frame_id and imu_used: fixed_frame_id
+  = frame_id + "_stabilized"`), and odometry still uses it as `guess_frame_id`, so error #1
+  returned. deskewing:=false alone is NOT a full fix.
+- Also hit: TWO RTAB instances running at once (a prior launch didn't fully die). Symptom:
+  topics publishing very fast / doubled. FIX: `pkill -f rtabmap; pkill -f icp_odometry`
+  then `ros2 node list | grep -i rtabmap` to confirm clean BEFORE relaunching. ALWAYS
+  ensure only one instance.
+
+### THE FIX TO TRY NEXT TIME (cold-prep this properly before rig-on)
+Primary fix = publish the missing static transform, in its own terminal, BEFORE launching:
+    ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 unilidar_lidar unilidar_imu
+  (args: x y z yaw pitch roll parent child. `0 0 0 0 0 0` = treat IMU as co-located with
+   LiDAR — a fine approximation for a compact unit; refine with the L2's real IMU→LiDAR
+   offset from Unitree docs if available.)
+Then relaunch RTAB (single instance) with imu_topic and deskewing:=false.
+If error #1 (`_stabilized`) persists, the deeper fix is to set the RTAB parameter
+`always_check_imu_tf:=false` (the error message itself suggests this) and/or provide an
+explicit `fixed_frame_id`. This needs cold research in the rtabmap_odom docs — it is a
+TF-plumbing task deserving its own focused, cold-prepped session, NOT live improvisation.
+
+### HONEST RECOMMENDATION
+LiDAR-ONLY maps are already EXCELLENT (16mm precision). The IMU is a nice-to-have for
+aggressive motion. DEFER it until (a) mobilization/fast-walking actually needs it, or
+(b) a dedicated cold session with the static-TF + always_check_imu_tf fix fully prepped.
+Do NOT let it block progress. Working baseline command (NO imu, proven):
+    ros2 launch rtabmap_examples lidar3d.launch.py \
+        lidar_topic:=/unilidar/cloud frame_id:=unilidar_lidar
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 8. SESSION UPDATE LOG (append one line per session; values above stay current)
@@ -216,3 +383,31 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
   (lidar_topic=/unilidar/cloud frame_id=unilidar_lidar, no IMU/camera). Map built live
   (387+ nodes, graph-optimized), saved milestone_map_20260818.db (5.1MB). Stutter=Jetson
   load (harmless). ply export didn't land - re-export cold from .db next session. MILESTONE.
+- 2026-08-18 (cont): Analyzed first map (cloud.ply, 181,508 pts, exported from .db).
+  QUALITY VERDICT: HIGH. Sees to ~8m (median range 1.67m). ~52% points form clean
+  planes (35% walls + 17% floor/ceiling) = structured, not noise. Dominant plane
+  thickness 16.3mm 1-sigma = AT SENSOR LIMIT (L2 spec ~1-3cm), NO drift/smear blur.
+  LESSON: rig barely translated (1.44m path = pan-in-place). Geometry excellent but
+  is ~one-vantage panorama. NEXT MAP: WALK A PATH (traverse space) for full spatial
+  map + real loop closures. LiDAR-only geometry needs no tau/camera - stands alone.
+- 2026-08-18 (cont): Added section 7B CAMERA INTEGRATION BRANCH (if/then): B0578 now
+  refines the colour pipeline; IF trigger camera arrives THEN re-calibrate+wire trigger,
+  pipeline carries over, moving-colour becomes clean. Also noted: walking = mobilization
+  detour (mount+power+Waveshare touch UI), do bench refinement FIRST.
+- 2026-08-18 (cont): IMU-into-odometry PREPPED cold (PREP_IMU_INTEGRATION.md).
+  imu_filter_madgwick confirmed INSTALLED. Decision tree ready: echo /unilidar/imu
+  orientation_covariance[0] == -1 → Branch B (madgwick filter → /imu/data), else
+  Branch A (direct). Fallback = LiDAR-only (proven). Bench roadmap: IMU→density→B0578
+  colour→Waveshare UI→mobilize. Mounts (Jetson/battery/Waveshare) fabricating in bg.
+- 2026-08-18 (cont): IMU-into-odometry ATTEMPTED at bench, PAUSED (full detail in new
+  section 7C). Confirmed L2 IMU publishes REAL live orientation (tilt-tested) → madgwick
+  NOT needed. But adding imu_topic FAILS: missing static TF between unilidar_lidar and
+  unilidar_imu, plus auto-created unilidar_lidar_stabilized frame causes 'guess_from_tf'
+  abort. deskewing:=false alone did NOT fix (stabilized frame still made). Also hit
+  double-RTAB-instance (pkill -f rtabmap first). FIX prepped in 7C: publish static_transform
+  unilidar_lidar→unilidar_imu (0 0 0 0 0 0), maybe always_check_imu_tf:=false. DEFERRED as
+  its own cold task — LiDAR-only maps are excellent and need none of this. User wisely
+  stopped when commands got ahead of understanding (rig hot). Clean baseline intact.
+- 2026-08-18 (cont): Wrote full handoff detail (section 0 onboarding + 7C IMU detail)
+  per user request for cold-reader completeness. NEXT SESSION = Item 2: cold-prep camera
+  colour integration (rgbd_sync). Rig shut down clean. LiDAR-only baseline intact.
