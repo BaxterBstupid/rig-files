@@ -1,3 +1,4 @@
+[MASTER_REFERENCE(2).md](https://github.com/user-attachments/files/31201766/MASTER_REFERENCE.2.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
 Last updated: 2026-08-17 (session: framework + RTAB scoping)
@@ -36,9 +37,11 @@ calibrated + vetted), fusion node ✅ (colour lands on geometry when static). RT
 installed + healthy and HAS BUILT ITS FIRST 3D MAP (LiDAR-only, high quality, 16mm
 precision) — this is the big recent milestone. Temporal calibration (tau, the camera-LiDAR
 time offset) is NOT solved but only matters for COLOUR during motion, NOT for LiDAR geometry.
-IMU-into-odometry was attempted and paused (TF issue, see 7C) — not needed for good maps.
-NEXT: bench refinement (add camera colour), then mobilize the rig (mounts being built) to
-walk-and-map. Camera upgrade (to a hardware-triggered model that kills tau) is planned —
+IMU-into-odometry attempted+paused (TF issue, see 7C) — not needed for good maps. CAMERA
+COLOUR is in progress (see 7D): two methods (Way A = pre-coloured cloud, Way B = RTAB
+colours at export); Way A is one step from working (colour proven to survive into RTAB,
+blocked only by a missing 'time' field), Way B is ~90% cold-prepped. NEXT: finish colour
+(apply the Way A fix), then mobilize the rig (mounts being built) to walk-and-map. Camera upgrade (to a hardware-triggered model that kills tau) is planned —
 see 7B for the if/then branch.
 
 >>> NEXT SESSION STARTS HERE: Item 2 — COLD-PREP CAMERA COLOUR integration.
@@ -195,6 +198,9 @@ detailed status. 8 = session log. Narrative history is in PLAN_NEXT_SESSION.md.
 | PLAN_NEXT_SESSION.md | narrative history (archived-priority) |
 | CALIBRATION_FRAMEWORK.md | triple-vetted 3-stage procedure |
 | CAMERA_OPTIONS.md | upgrade options + pre-purchase checklist |
+| PREP_COLOR_WAY_A.md | Way A colour steps + session result + fixes |
+| PREP_COLOR_WAY_B.md | Way B colour prep (camera_info + TF + open item) |
+| camera_info_publisher.py | publishes vetted intrinsics as CameraInfo (Way B), validated |
 | extrinsic_pipeline.py, zhou_joint_solve.py, extract_board_edges.py | extrinsic tools (sandbox-validated) |
 | dump_curves_v4.py, measure_tau.py, ts_check2.py | tau tools (sandbox-validated) |
 
@@ -252,7 +258,8 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
 | RTAB-Map install | ✅ DONE + healthy (surprise) |
 | RTAB-Map first map | ✅ DONE 2026-08-18: LiDAR-only SLAM, map built+saved (milestone_map_20260818.db, 5.1MB, 387+ nodes). Quality HIGH (16mm precision). |
 | RTAB-Map IMU odometry | ⏸ ATTEMPTED, PAUSED (missing static TF, see 7C). Not needed — LiDAR-only excellent. |
-| RTAB-Map color/traverse | ⬜ NEXT bench: B0578 colour (sec 7B) + walk-a-path needs mobilization |
+| RTAB-Map colour (Way A) | ⏳ 1 step from working: colour SURVIVES to RTAB, blocked by fusion node stripping 'time' field. Fix: deskewing:=false OR preserve time. See 7D. |
+| RTAB-Map colour (Way B) | ⏳ cold prep ~90%: camera_info node + static TF built+validated; 1 open item (store rgb w/o depth). See 7D. |
 | Camera upgrade | ⬜ researching (trigger camera → kills tau) |
 | Downstream (mesh/UE/relight) | ⬜ after first maps |
 
@@ -374,6 +381,71 @@ Do NOT let it block progress. Working baseline command (NO imu, proven):
         lidar_topic:=/unilidar/cloud frame_id:=unilidar_lidar
 
 ═══════════════════════════════════════════════════════════════════════════
+## 7D. CAMERA COLOUR INTEGRATION — DETAILED STATUS (in progress, 2026-08-18)
+═══════════════════════════════════════════════════════════════════════════
+FOR A COLD READER: the LiDAR maps are geometry-only (grey). This is the work to make
+them COLOURED (needed downstream for film-set relighting). Two methods are being tried;
+we build BOTH and compare by eye. Neither is finished yet. LiDAR-only maps still work
+and need none of this.
+
+### THE TWO METHODS
+WAY A — feed a PRE-COLOURED cloud to RTAB-Map.
+  Your colorized_fusion_node.py (runs in rig_start.sh) projects the camera onto the
+  LiDAR cloud and publishes /fusion/colorized_cloud (fields: x,y,z,rgb). Point RTAB-Map
+  at THAT instead of raw /unilidar/cloud. If RTAB keeps the colour → coloured map.
+WAY B — let RTAB-Map colour it itself at export.
+  RTAB records raw LiDAR + camera images during mapping, then its export-dialog "Camera
+  projection" paints the assembled cloud from the stored images using the calibration.
+
+### WAY A — TESTED 2026-08-18, ONE STEP FROM WORKING
+  RAN it. /fusion/colorized_cloud publishes ~12Hz, rgb field CONFIRMED present.
+  Launched: ros2 launch rtabmap_examples lidar3d.launch.py \
+      lidar_topic:=/fusion/colorized_cloud frame_id:=unilidar_lidar
+  RESULT: odometry ABORTED. Error: "Input cloud doesn't have t/time/stamps/timestamp
+  field! Input cloud has these fields: x y z rgb ... Failed to deskew input cloud."
+  DIAGNOSIS (key):
+    - COLOUR SURVIVES to RTAB's input (error itself shows "x y z rgb"). Good - the
+      thing we feared (RTAB dropping colour) did NOT happen at the input stage.
+    - Blocker is UNRELATED to colour: RTAB DESKEWING needs a per-point 'time' field.
+      Raw /unilidar/cloud HAS x,y,z,intensity,ring,time. But colorized_fusion_node.py
+      OUTPUTS ONLY x,y,z,rgb - it STRIPS the 'time' field. So deskew fails, odom aborts.
+    - Did not test the fix before rig shutdown.
+  TWO FIXES (next session):
+    FIX 1 (quick): add deskewing:=false (no IMU = don't need deskew anyway):
+      pkill -f rtabmap; pkill -f icp_odometry   # single instance first
+      ros2 launch rtabmap_examples lidar3d.launch.py \
+        lidar_topic:=/fusion/colorized_cloud frame_id:=unilidar_lidar deskewing:=false
+    FIX 2 (better, cold-preppable): edit colorized_fusion_node.py to PRESERVE the
+      per-point 'time' field (output x,y,z,rgb,time) → true drop-in, works WITH deskew.
+  => Way A is ONE small step from a coloured map. Full detail in PREP_COLOR_WAY_A.md.
+
+### WAY B — COLD PREP ~90% DONE (2 of 3 pieces built + validated)
+  Needs, during capture: raw cloud + camera image + a camera_info TOPIC + a camera↔lidar
+  TF. Then colour at export via "Camera projection".
+  PIECE 1 (DONE): camera_info_publisher.py - loads vetted intrinsics
+    (calib_intrinsics_20260813.yaml), publishes sensor_msgs/CameraInfo on
+    /camera/camera_info stamped to match /image_raw. Sandbox-validated (cx=921.002,
+    valid K/P/R/d, stale-K guard works). Transfer to Jetson ~/, run: python3 ~/camera_info_publisher.py
+  PIECE 2 (DONE): static TF unilidar_lidar→camera_link, computed from
+    extrinsic_20260816.yaml by INVERTING stored lidar→cam (round-trip verified 1e-16):
+      ros2 run tf2_ros static_transform_publisher \
+        --x -0.032192 --y -0.004570 --z 0.166238 \
+        --qx 0.026326 --qy 0.070258 --qz 0.674869 --qw 0.734114 \
+        --frame-id unilidar_lidar --child-frame-id camera_link
+      (CHECK cold: ros2 topic echo /image_raw --field header.frame_id --once - the
+       image's frame_id must MATCH --child-frame-id; adjust one to agree.)
+  PIECE 3 (OPEN): exact rtabmap params to STORE rgb images WITHOUT depth on a scan-cloud
+    map (standard launch wants a depth image we don't have). One more cold research step.
+  QUALITY CAVEAT (from a Velodyne+camera project that did this): sparse lidar clouds
+    colour THINLY ("not enough RGB pixels"). Our single scans ~5,400 pts are sparse →
+    Way B colour may need DENSE/accumulated clouds to look good. The by-eye compare shows it.
+  Full detail in PREP_COLOR_WAY_B.md.
+
+### COMPARE PLAN: build both, export color_wayA.ply + color_wayB.ply, judge BY EYE
+  (+ Claude confirms the rgb field survived in each file). Keep whichever lands colour
+  correctly on geometry and looks better.
+
+═══════════════════════════════════════════════════════════════════════════
 ## 8. SESSION UPDATE LOG (append one line per session; values above stay current)
 ═══════════════════════════════════════════════════════════════════════════
 - 2026-08-17: Built framework + camera options. Found camera framerate limit (30/60/80
@@ -411,3 +483,11 @@ Do NOT let it block progress. Working baseline command (NO imu, proven):
 - 2026-08-18 (cont): Wrote full handoff detail (section 0 onboarding + 7C IMU detail)
   per user request for cold-reader completeness. NEXT SESSION = Item 2: cold-prep camera
   colour integration (rgbd_sync). Rig shut down clean. LiDAR-only baseline intact.
+- 2026-08-18 (cont): CAMERA COLOUR work started (new section 7D). Two methods (Way A
+  pre-coloured cloud, Way B RTAB export-projection). WAY A TESTED: colorized cloud
+  publishes ~12Hz with rgb; colour SURVIVES into RTAB input (good); but odometry aborts
+  because fusion node strips the per-point 'time' field deskewing needs. Fix = deskewing
+  :=false OR preserve time in fusion node (both noted, untested - rig shut down). WAY B
+  cold prep ~90%: built+validated camera_info_publisher.py (vetted K) and computed+verified
+  the static TF from the extrinsic; 1 open item (store rgb w/o depth on scan map). Delivered
+  PREP_COLOR_WAY_A.md, PREP_COLOR_WAY_B.md, camera_info_publisher.py. Heat kept low.
