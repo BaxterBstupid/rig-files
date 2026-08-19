@@ -39,7 +39,12 @@ time offset) is NOT solved but only matters for COLOUR during motion, NOT for Li
 IMU-into-odometry attempted+paused (TF issue, see 7C) — not needed for good maps. CAMERA
 COLOUR is in progress (see 7D): two methods (Way A = pre-coloured cloud, Way B = RTAB
 colours at export); Way A is one step from working (colour proven to survive into RTAB,
-blocked only by a missing 'time' field), Way B is ~90% cold-prepped. MAJOR STRATEGIC RESULT this session: the pipeline ENDPOINT is now decided — a PHOTOREAL
+blocked only by a missing 'time' field), Way B is ~90% cold-prepped. 2026-08-19 RESULT: colour pipeline PROVEN end-to-end - v3 fusion node deployed+verified,
+RTAB runs clean on the colored cloud (no deskew abort), and colour SURVIVES into the saved
+map (confirmed by direct DB inspection: 11 nodes, per-point packed RGB; assembled to 27,405
+colored pts). BUT the per-point colour is sparse "dots", FAR from usable - it proves the
+plumbing, not image quality. Usable/photoreal must come from TEXTURE (7E/7F), not per-point
+colour. Prior-session STRATEGIC RESULT: the pipeline ENDPOINT is decided — a PHOTOREAL
 RELIGHTABLE TEXTURED MESH (mesh-for-light + registered points-for-truth, "#3 synthesis"),
 produced via the professional VFX pipeline (LiDAR geometry + camera-texture reprojection ->
 delight -> PBR -> offline render). See sections 7E (the decision + why) and 7F (the 6-stage
@@ -264,8 +269,8 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
 | RTAB-Map install | ✅ DONE + healthy (surprise) |
 | RTAB-Map first map | ✅ DONE 2026-08-18: LiDAR-only SLAM, map built+saved (milestone_map_20260818.db, 5.1MB, 387+ nodes). Quality HIGH (16mm precision). |
 | RTAB-Map IMU odometry | ⏸ ATTEMPTED, PAUSED (missing static TF, see 7C). Not needed — LiDAR-only excellent. |
-| RTAB-Map colour (Way A) | ⏳ 1 step from working: colour SURVIVES to RTAB, blocked by fusion node stripping 'time' field. Fix: deskewing:=false OR preserve time. See 7D. |
-| RTAB-Map colour (Way B) | ⏳ cold prep ~90%: camera_info node + static TF built+validated; 1 open item (store rgb w/o depth). See 7D. NOTE: downgraded to preview — see 7E/7F. |
+| RTAB-Map colour (Way A) | ✅ WORKS: v3 deployed+verified, colour survives full pipeline into map (proven via DB). Sparse 'dots' quality only - preview, not usable. See 7D. |
+| RTAB-Map colour (Way B) | ⏸ NOT NEEDED for now: Way A proved colour-in-map works. Way B (camera_info+TF) reserved for texture/mesh path. See 7D/7F. |
 | PIPELINE ENDPOINT decided | ✅ Photoreal relightable TEXTURED MESH (#3: mesh-for-light + points-for-truth). See 7E. |
 | VFX pipeline + software mapped | ✅ 6-stage pro pipeline + tools (RealityScan/Agisoft De-Lighter/Blender). See 7F. |
 | Mesh melt fear tested | ✅ Poisson blobs (max 1556mm off) vs ball-pivoting honest (0mm) on our real cloud. Edge-preserving meshing avoids melt. See 7E. |
@@ -453,6 +458,45 @@ WAY B — let RTAB-Map colour it itself at export.
 ### COMPARE PLAN: build both, export color_wayA.ply + color_wayB.ply, judge BY EYE
   (+ Claude confirms the rgb field survived in each file). Keep whichever lands colour
   correctly on geometry and looks better.
+
+
+### WAY A — RESOLVED + PIPELINE PROVEN END-TO-END (2026-08-19)
+v3 fusion node (colorized_fusion_node_v3.py) was DEPLOYED to the Jetson (swapped in as
+~/colorized_fusion_node.py; v2 backed up as .bak_v2) and VERIFIED on real data:
+  - colored cloud /fusion/colorized_cloud publishes ~12.5Hz with fields x,y,z,rgb,TIME
+    (the time field at offset 16 is the fix; last session it was ABSENT -> RTAB aborted).
+  - RTAB launched on the colored cloud:
+      ros2 launch rtabmap_examples lidar3d.launch.py \
+        lidar_topic:=/fusion/colorized_cloud frame_id:=unilidar_lidar
+    -> odometry RUNS CLEAN, NO deskew abort (Odom ratio ~0.5-0.75, std dev ~2cm/0.5deg,
+    update ~0.02s). rtabmap node maps (local map grows). The deskew blocker is GONE.
+  - Stationary ~30-45s capture saved: ~/Desktop/color_stationary_20260819.db (11 nodes).
+
+COLOR SURVIVES THE FULL PIPELINE (proven by direct DB inspection, not just GUI):
+  Opened the .db in the sandbox (SQLite). Each of the 11 nodes' scan blob is zlib-
+  compressed float32 (N,4) = x,y,z + PACKED RGB. Reinterpreting channel-3 bits as uint32
+  gives real per-point colors (e.g. R159 G165 B197 bluish-grey wall; R125 G135 B90 olive
+  wood; R245 G247 B248 near-white). => colour flows camera->fusion->odometry->mapping->DB.
+  Assembled all 11 scans into world frame via each Node's pose -> 27,405 colored points ->
+  color_stationary_assembled.ply + color_map_render.png (in outputs).
+
+GUI EXPORT QUIRK (worked around, important for cold reader): the standalone rtabmap GUI
+  export threw "Cloud N not found in cache" and the 3D map view was empty. This is a known
+  RTAB scan-cloud quirk (cache not auto-populated; Edit->Download all clouds is supposed to
+  fix it but didn't fully here). NOT a data problem - the DB was intact. WORKAROUND that
+  WORKS: read the colored scans DIRECTLY from the .db (SQLite -> zlib -> float32 (N,4) ->
+  transform by Node.pose) and write the PLY ourselves. So we do NOT depend on the finicky
+  GUI export. (Script pattern is in this session's sandbox work; can be re-derived from the
+  DB schema: Data.scan blob per node, Node.pose = 12 float32 3x4 matrix.)
+
+HONEST QUALITY VERDICT (operator + assistant agree): the colored cloud is FAR from usable.
+  It is sparse "colour dots" (per-point colour samples ~3% of the image), dim, not
+  photographic. This test proved the PLUMBING (colour survives the pipeline into a coherent
+  map), NOT usable image quality. Per-point colour TOPS OUT short of usable no matter how
+  many scans are stacked - density makes it thicker, never photographic. => usable/photoreal
+  quality must come from TEXTURE (draping full camera images onto surfaces, all pixels), i.e.
+  the mesh+texture path in 7E/7F, NOT from per-point colour. Per-point colour is a
+  reference/preview layer only. Stop measuring "usable" against per-point renders.
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 7E. THE PIPELINE ENDPOINT DECISION — PHOTOREAL RELIGHTABLE MESH (session, 2026-08-18)
@@ -677,3 +721,19 @@ C4D)? Decides whether to target "clean data into Blender" specifically or stay t
   colour downgraded to preview — full photos are the texture source. Also researched Set.A.Light
   (the operator's reference tool) + Unreal LiDAR plugin (native point-cloud import, our format
   fits). No rig/heat used — all analysis + research on existing data. Open Q: operator's DCC?
+- 2026-08-19: COLOUR PIPELINE PROVEN END-TO-END (benched). Deployed v3 fusion node (preserves
+  per-point time field), verified colored cloud publishes x,y,z,rgb,time @12.5Hz. RTAB runs
+  CLEAN on /fusion/colorized_cloud - NO deskew abort (the v3 fix worked). Stationary capture ->
+  color_stationary_20260819.db (11 nodes). Proved colour SURVIVES the full pipeline by reading
+  the DB directly (SQLite->zlib->float32 N,4 with packed RGB; real colors). Assembled 27,405
+  colored pts -> render. GUI export quirk ("cloud not found in cache") worked around by reading
+  DB directly - we don't depend on the GUI export. HONEST VERDICT: sparse "colour dots", FAR
+  from usable - proves plumbing not quality; usable must come from TEXTURE not per-point colour.
+  Big strategic session prior: decided endpoint = photoreal relightable textured mesh (7E),
+  mapped pro VFX pipeline + software (7F: RealityScan/Agisoft De-Lighter/Blender), found
+  Cine Tracer (Unreal cinematography sim) as precedent, and reframed delighting as capture-
+  discipline (cross-pol/flat-light stills) rather than unreliable auto-software. Operator
+  re-centered the MOUNTAIN: a clear/dense/colored/coherent 3D capture of a walked space is THE
+  goal; everything else (delight/relight/Unreal/handoff) is downstream. Files: colorized_fusion
+  _node_v3.py (deployed), color_stationary_assembled.ply, color_map_render.png. No walk yet
+  (still benched). Camera colour = preview layer; texture path is where usable quality lives.
