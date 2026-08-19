@@ -1,4 +1,3 @@
-[MASTER_REFERENCE(2).md](https://github.com/user-attachments/files/31201766/MASTER_REFERENCE.2.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
 Last updated: 2026-08-17 (session: framework + RTAB scoping)
@@ -40,8 +39,15 @@ time offset) is NOT solved but only matters for COLOUR during motion, NOT for Li
 IMU-into-odometry attempted+paused (TF issue, see 7C) — not needed for good maps. CAMERA
 COLOUR is in progress (see 7D): two methods (Way A = pre-coloured cloud, Way B = RTAB
 colours at export); Way A is one step from working (colour proven to survive into RTAB,
-blocked only by a missing 'time' field), Way B is ~90% cold-prepped. NEXT: finish colour
-(apply the Way A fix), then mobilize the rig (mounts being built) to walk-and-map. Camera upgrade (to a hardware-triggered model that kills tau) is planned —
+blocked only by a missing 'time' field), Way B is ~90% cold-prepped. MAJOR STRATEGIC RESULT this session: the pipeline ENDPOINT is now decided — a PHOTOREAL
+RELIGHTABLE TEXTURED MESH (mesh-for-light + registered points-for-truth, "#3 synthesis"),
+produced via the professional VFX pipeline (LiDAR geometry + camera-texture reprojection ->
+delight -> PBR -> offline render). See sections 7E (the decision + why) and 7F (the 6-stage
+pipeline + concrete SOFTWARE options: RealityScan / Agisoft De-Lighter / Blender). Per-point
+colour (Way A/B) is downgraded to preview-only — the FULL PHOTOS are the texture source, not
+per-point cloud colour. NEXT: the rig's job is crisp GEOMETRY + registered PHOTOS; downstream
+is the mesh/delighting/render pipeline in 7F. Colour Way A fix (7D) remains available but is
+no longer the priority. Camera upgrade (to a hardware-triggered model that kills tau) is planned —
 see 7B for the if/then branch.
 
 >>> NEXT SESSION STARTS HERE: Item 2 — COLD-PREP CAMERA COLOUR integration.
@@ -259,7 +265,10 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
 | RTAB-Map first map | ✅ DONE 2026-08-18: LiDAR-only SLAM, map built+saved (milestone_map_20260818.db, 5.1MB, 387+ nodes). Quality HIGH (16mm precision). |
 | RTAB-Map IMU odometry | ⏸ ATTEMPTED, PAUSED (missing static TF, see 7C). Not needed — LiDAR-only excellent. |
 | RTAB-Map colour (Way A) | ⏳ 1 step from working: colour SURVIVES to RTAB, blocked by fusion node stripping 'time' field. Fix: deskewing:=false OR preserve time. See 7D. |
-| RTAB-Map colour (Way B) | ⏳ cold prep ~90%: camera_info node + static TF built+validated; 1 open item (store rgb w/o depth). See 7D. |
+| RTAB-Map colour (Way B) | ⏳ cold prep ~90%: camera_info node + static TF built+validated; 1 open item (store rgb w/o depth). See 7D. NOTE: downgraded to preview — see 7E/7F. |
+| PIPELINE ENDPOINT decided | ✅ Photoreal relightable TEXTURED MESH (#3: mesh-for-light + points-for-truth). See 7E. |
+| VFX pipeline + software mapped | ✅ 6-stage pro pipeline + tools (RealityScan/Agisoft De-Lighter/Blender). See 7F. |
+| Mesh melt fear tested | ✅ Poisson blobs (max 1556mm off) vs ball-pivoting honest (0mm) on our real cloud. Edge-preserving meshing avoids melt. See 7E. |
 | Camera upgrade | ⬜ researching (trigger camera → kills tau) |
 | Downstream (mesh/UE/relight) | ⬜ after first maps |
 
@@ -446,6 +455,167 @@ WAY B — let RTAB-Map colour it itself at export.
   correctly on geometry and looks better.
 
 ═══════════════════════════════════════════════════════════════════════════
+## 7E. THE PIPELINE ENDPOINT DECISION — PHOTOREAL RELIGHTABLE MESH (session, 2026-08-18)
+═══════════════════════════════════════════════════════════════════════════
+FOR A COLD READER: this section is the STRATEGIC BACKBONE — it defines what the whole
+project is ultimately FOR and what the final deliverable is. Everything else (LiDAR SLAM,
+calibration, colour work) is upstream of this. Read this to understand the destination.
+
+### WHAT THE PROJECT ACTUALLY PRODUCES (the goal, stated precisely by the operator)
+NOT a personal reference/previs. The deliverable is CLIENT-FACING, PROFESSIONAL images
+with the operator's name on them. Requirements, all four mandatory:
+  1. PHOTOREAL — indistinguishable from a photograph.
+  2. 3D — a real navigable/re-angleable scene, not a flat photo.
+  3. MANIPULATABLE — relightable (day->night, place your own lights) + re-cameraable.
+  4. PREDICTIVELY ACCURATE — light behaves as it will on the real shoot (this is the
+     point: scout/plan a real location's lighting before the shoot).
+Operator's answers that pin the architecture: quality target = PHOTOREAL (indistinguishable);
+who manipulates = JUST THE OPERATOR, producing STILLS (not real-time, not client-interactive);
+effort tolerance = HEAVY art pass per hero shot is FINE.
+
+### THE REFERENCE TOOL: Set.A.Light 3D (what "good" looks like to the operator)
+Set.A.Light 3D (elixxier) is a PHYSICS-BASED lighting PRE-VISUALISATION simulator for
+photographers/filmmakers. You place lights in a virtual 3D room and it predicts —
+physically correctly — every shadow/highlight/reflection, so "it works in reality just
+like in the sim." It even has a built-in "Day-for-Night" feature. BUT its rooms are
+GENERIC kit-bashed approximations from a library. THE PROJECT'S CORE VALUE = replace the
+generic room with a METRICALLY ACCURATE LiDAR SCAN OF THE REAL LOCATION you'll shoot on.
+=> "Set.A.Light, but the set is the real scanned location." (Open Q, not yet researched:
+   can Set.A.Light import custom meshes? If yes, scanned mesh could feed it directly;
+   if no, Unreal/Blender is the destination. Decides the back half.)
+
+### WHY THE ENDPOINT IS A TEXTURED MESH (settled, from first principles + research)
+Operator's deciding principle: "Lighting always interacts with surfaces." Physical light
+prediction REQUIRES SURFACES. Therefore the captured location MUST become a mesh (surfaces),
+not stay a point cloud (points don't interact with light) and not a Gaussian Splat.
+Contrast of the three representations, evaluated for THIS use case (relightable, Unreal):
+  - POINT CLOUD: imports natively to Unreal (LiDAR Point Cloud plugin; wants XYZ+RGB, 1UU=
+    1cm so metres convert clean — our format already fits). GREAT for reference/measurement/
+    layout. But points aren't surfaces -> NO true predictive relighting. Reference layer only.
+  - GAUSSIAN SPLATTING (3DGS): photoreal + real-time, RISING in film/VP. BUT bakes lighting
+    IN — relightable-GS is research-only (Relightable 3DG NeurIPS'23, LumiGauss WACV'25),
+    NOT in any commercial DCC as of 2026. Splats also don't participate in Unreal LUMEN GI;
+    only shadow-proxy hacks (Volinga). GS is for displaying captured-as-lit scenes, i.e.
+    the OPPOSITE of relighting. OFF THE PATH for our goal (revisit in 6-12mo as it matures).
+  - TEXTURED MESH: the ONLY one with surfaces light interacts with -> the endpoint.
+    Editable, measurable, Unreal/Lumen-native. Inherits the LiDAR's 16mm accuracy.
+GS geometric accuracy alone ~8cm (needs LiDAR anchor); mesh inherits LiDAR 16mm. Confirmed
+by literature + the operator's physics principle. THE ENDPOINT IS A TEXTURED MESH.
+
+### THE "MELTED MESH" FEAR — REAL BUT SOLVABLE (tested cold on our own data)
+Operator's valid worry (from a PolyCam example, IMG-5727): mesh-textured scans often look
+MELTED — bloated blobs, rounded edges, surfaces dissolving. WHY: PolyCam uses PHOTOGRAMMETRY
+(guesses geometry from photos -> fails on blank surfaces) + POISSON meshing (fills gaps with
+smooth invented surface). We TESTED meshing on our REAL milestone cloud (cloud.ply, 181k pts,
+Open3D):
+  - POISSON depth 8/10: BLOBS. Vertex-to-real-point median 25mm but 95th pct 273mm, MAX
+    1556mm = inventing surface 1.5m from any measured point = the melt, on OUR data.
+  - BALL-PIVOTING: vertices ARE the real points (max 0mm) = NO blobbing, edge-preserving,
+    but leaves holes where LiDAR didn't sample.
+Literature CONFIRMS: Poisson smooths/rounds sharp edges + is robust to noise but invents in
+gaps; Ball-Pivoting/Alpha-shapes are geometrically precise (stay on real points) but hole-y
+and noise-sensitive. => OUR geometry is LiDAR-MEASURED (16mm), not photogrammetry-guessed,
+so the melt is AVOIDABLE by choosing EDGE-PRESERVING meshing (ball-pivoting / trimmed-Poisson),
+NOT default Poisson. The fear was valid but it's a MESHING-PARAMETER problem, not a dealbreaker.
+CRITICAL because predictive lighting: a melted wall predicts light WRONG. Mesh honesty = 
+prediction validity. (rendered evidence: outputs/mesh_comparison.png)
+
+### CHOSEN ARCHITECTURE: #3 SYNTHESIS — MESH-FOR-LIGHT + POINTS-FOR-TRUTH
+Operator chose: keep BOTH representations registered in the same frame:
+  - TEXTURED MESH = the working/lighting model (surfaces light interacts with).
+  - RAW LiDAR POINT CLOUD = kept as METRIC GROUND-TRUTH to verify the mesh never lied.
+Both derive from the SAME capture -> automatically registered (same origin/coords). The mesh
+does the lighting job; the points are the incorruptible geometric record to check it against.
+Fits a PREDICTIVE/METRIC tool (must be trustable). Matches pro practice (VFX ships LiDAR
+points ALONGSIDE the appearance asset for verification). Cost: two assets to carry (Unreal
+handles both natively). The points don't relight — they're truth/reference/measurement.
+
+═══════════════════════════════════════════════════════════════════════════
+## 7F. THE PROFESSIONAL VFX PIPELINE + SOFTWARE OPTIONS (research, 2026-08-18)
+═══════════════════════════════════════════════════════════════════════════
+FOR A COLD READER: this is HOW the pros turn LiDAR+camera into a photoreal relightable
+asset, and the concrete software to use. Our exact hybrid (LiDAR geometry + camera texture)
+is a DOCUMENTED, SUPPORTED professional workflow — not experimental. We are most of the way
+to the INPUT side of it already (our rig + calibration are exactly what it needs).
+
+### THE 6-STAGE PIPELINE (every VFX house doing photoreal relightable capture uses this)
+  1. CAPTURE — LiDAR (geometry) + camera photos (appearance). == OUR RIG.
+  2. RECONSTRUCT — merge into a textured mesh (LiDAR geometry + photo texture).
+  3. RETOPOLOGISE — high-poly scan -> clean lower-poly mesh with good UVs (art pass).
+  4. DELIGHT — *** THE KEY STEP *** remove baked-in lighting/shadows from the photos to get
+     flat "albedo". THIS is what makes it RELIGHTABLE. A photo has sun/shadow baked in; if
+     you relight without removing it, the old + new lighting fight. Delighting strips the
+     original so a day->night relight is physically correct. (This was the missing concept.)
+  5. AUTHOR PBR MATERIALS — albedo + roughness + normal + metalness maps = surfaces that
+     respond correctly to new light. This is where "indistinguishable from a photo" is won.
+  6. RELIGHT & RENDER — place lights, render photoreal. OFFLINE renderer for stills (we don't
+     need real-time -> can use Blender Cycles / path-tracer = higher photoreal ceiling).
+
+### WHY OUR RIG FITS: camera REPROJECTION (the piece our calibration enables)
+Standard photogrammetry guesses geometry AND texture from photos (the melt). OUR approach:
+geometry from LiDAR (measured), photos used ONLY for texture, applied by CAMERA REPROJECTION
+— because we KNOW each camera's exact pose (our intrinsics+extrinsic calibration!), we project
+photos onto the LiDAR mesh from those known positions. OUR CALIBRATION WORK IS EXACTLY THE
+INPUT REPROJECTION NEEDS. (Blender does camera projection well; RealityScan does it natively.)
+
+### SOFTWARE OPTIONS — RECONSTRUCTION / TEXTURING
+  - RealityScan (formerly RealityCapture, by Epic Games) — *** PRIMARY CANDIDATE ***
+    FREE for most users. PURPOSE-BUILT for our hybrid: "seamlessly blends photogrammetry with
+    laser-scan (LiDAR) inputs — photoreal textures from photos + precise depth from scans."
+    Natively: registers, filters, colours, textures, MESHES LiDAR, and re-textures LiDAR scans
+    USING IMAGES. Takes our formats directly (LAS/LAZ, E57, PLY, CSV, XYZ, PTS — our cloud is
+    .ply). Unreal-native (Epic). Caveat: default meshing can be Poisson-ish -> WATCH THE MELT,
+    trim aggressively / use classes for selective meshing.
+  - Agisoft Metashape (Pro, paid) — mature LiDAR+photo hybrid; has a built-in delighter.
+  - Blender (manual camera reprojection) — FREE, most control, most labour; our calibration
+    drives the projection exactly. Good for the honest-meshing purist path.
+  - RTAB-Map export --texture — FREE, we already have it; BUT basic, Poisson-based, no
+    delighting, low photoreal ceiling. Preview-grade only, not the endpoint.
+
+### SOFTWARE OPTIONS — DELIGHTING (the relightable-maker; Stage 4)
+  - Agisoft De-Lighter — FREE standalone, purpose-built: removes baked-in lighting from
+    photogrammetry texture maps, leaving them ready for re-lighting. *** THE obvious tool. ***
+  - Unity De-Lighting Tool — free, needs extra maps.
+  - Substance Painter (manual) — most control, most work.
+
+### SOFTWARE OPTIONS — FINAL RENDER (photoreal stills)
+  - Blender Cycles — FREE, offline, photoreal, full art-pass control. BEST FIT for
+    "stills + heavy effort OK". Recommended primary.
+  - Unreal (Lumen / Path-Tracer) — Unreal-native; path-tracer gives photoreal stills too;
+    real-time-ish. Good if staying in the Epic/RealityScan ecosystem.
+
+### THREE COHERENT ADOPTION OPTIONS (all share the SAME front half = our rig)
+  OPTION A — "RealityScan-centric" (RECOMMENDED START): rig -> RealityScan merges LiDAR
+    geometry + photo texture into a mesh -> Agisoft De-Lighter strips lighting -> Blender/
+    Unreal for PBR + relight + render. Least reinvention, free, Unreal-native, proven path.
+    Fastest concept validation. Risk: RealityScan meshing melt (trim hard).
+  OPTION B — "Blender-centric, full control": rig -> mesh LiDAR HONESTLY (Open3D ball-
+    pivoting/trimmed, already tested on our data) -> Blender camera-projects photos from our
+    calibrated poses -> delight -> PBR -> Cycles. Max control, avoids black-box meshing,
+    honours the #3 truth principle. Cost: most manual labour. Purist path if A's meshing melts.
+  OPTION C — "Hybrid: RealityScan geometry-lock + Blender art pass": RealityScan registers
+    photos to LiDAR + initial texture -> export to Blender for the hero-shot art pass (clean
+    mesh, delight, PBR, render). Automation + final control. Likely where pros land. 2 tools.
+
+### RECOMMENDATION + THE DECIDING TEST
+Start OPTION A (RealityScan): free, purpose-built, Unreal-native, fastest to validate the
+whole concept. Graduate to OPTION C (add Blender art pass) for hero shots. OPTION B if
+RealityScan's meshing disappoints on our geometry. The DELIGHTING step (Agisoft De-Lighter,
+free) is the conceptual key that makes day->night physically correct — put it on the radar.
+THE ONE THING THAT DECIDES A vs B/C: does RealityScan's meshing keep our LiDAR's 16mm
+crispness or does it blob? Testable next. If crisp -> A/C win on effort; if blobs -> B's
+honest meshing (proven on our data) becomes necessary.
+
+### WHAT THIS MEANS FOR THE RIG (important reframe)
+The rig's per-point COLOUR quality barely matters now. The FULL-RES PHOTOS are the texture
+source (via reprojection in the art pass), NOT the per-point cloud colour. So the sparse
+"colour dots" limitation of Way A/B is IRRELEVANT to the endpoint. The rig's real job:
+CRISP GEOMETRY (LiDAR) + REGISTERED REFERENCE PHOTOS (calibrated camera). Both of which we
+have or have scoped. Per-point colour (Way A/B) is downgraded to a quick preview only.
+OPEN QUESTION (not yet answered): does the operator already work in a 3D DCC (Blender/Maya/
+C4D)? Decides whether to target "clean data into Blender" specifically or stay tool-agnostic.
+
+═══════════════════════════════════════════════════════════════════════════
 ## 8. SESSION UPDATE LOG (append one line per session; values above stay current)
 ═══════════════════════════════════════════════════════════════════════════
 - 2026-08-17: Built framework + camera options. Found camera framerate limit (30/60/80
@@ -491,3 +661,19 @@ WAY B — let RTAB-Map colour it itself at export.
   cold prep ~90%: built+validated camera_info_publisher.py (vetted K) and computed+verified
   the static TF from the extrinsic; 1 open item (store rgb w/o depth on scan map). Delivered
   PREP_COLOR_WAY_A.md, PREP_COLOR_WAY_B.md, camera_info_publisher.py. Heat kept low.
+- 2026-08-18 (cont): MAJOR STRATEGIC session — decided the PIPELINE ENDPOINT. Established
+  the deliverable is CLIENT-FACING PHOTOREAL relightable 3D stills (operator's professional
+  name on them), heavy art pass OK, operator-manipulated. Reasoned from "light interacts with
+  surfaces" -> endpoint is a TEXTURED MESH (not point cloud, not Gaussian Splatting — GS bakes
+  lighting, can't relight, research-only + no Lumen). Chose #3 synthesis: mesh-for-light +
+  registered LiDAR points-for-truth. TESTED meshing on real cloud.ply: Poisson BLOBS (vertex
+  1556mm off real pts = the PolyCam melt) vs ball-pivoting HONEST (0mm, edge-preserving) —
+  melt is a solvable meshing-param choice, our LiDAR geometry is sound. RESEARCHED the pro VFX
+  pipeline (6 stages: capture->reconstruct->retopo->DELIGHT->PBR->render) — our LiDAR+camera
+  hybrid is a DOCUMENTED supported workflow; RealityScan (free, Epic) is purpose-built for it;
+  Agisoft De-Lighter (free) is the relightable-maker; Blender Cycles for photoreal stills.
+  Delighting = the key concept (strips baked light so day->night is correct). Wrote sections
+  7E (endpoint decision) + 7F (pipeline + software options + 3 adoption paths). Per-point
+  colour downgraded to preview — full photos are the texture source. Also researched Set.A.Light
+  (the operator's reference tool) + Unreal LiDAR plugin (native point-cloud import, our format
+  fits). No rig/heat used — all analysis + research on existing data. Open Q: operator's DCC?
