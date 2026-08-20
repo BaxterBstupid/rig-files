@@ -1,3 +1,4 @@
+[MASTER_REFERENCE(5).md](https://github.com/user-attachments/files/31269481/MASTER_REFERENCE.5.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
 Last updated: 2026-08-17 (session: framework + RTAB scoping)
@@ -44,7 +45,14 @@ RTAB runs clean on the colored cloud (no deskew abort), and colour SURVIVES into
 map (confirmed by direct DB inspection: 11 nodes, per-point packed RGB; assembled to 27,405
 colored pts). BUT the per-point colour is sparse "dots", FAR from usable - it proves the
 plumbing, not image quality. Usable/photoreal must come from TEXTURE (7E/7F), not per-point
-colour. Prior-session STRATEGIC RESULT: the pipeline ENDPOINT is decided — a PHOTOREAL
+colour — PROVEN 2026-08-19 by a texture probe (photoreal where geometry is clean; limiter
+is now MESHING quality — trimmed Poisson fixes it, 92.5% coverage photoreal). The full
+TEXTURING PIPELINE is now BUILT end-to-end (per_shot_texture.py + db_to_texture.py bridge)
+and the IMAGE-SAVING CAPTURE is PROVEN ON THE RIG (rtab_capture_with_images.sh v2: 10/10
+nodes with geometry+image+calib). Texturing method = PER-SHOT projection (not global-UV).
+The 270-pan is now UNBLOCKED (needed image-saving, which works). See 7H for all of this. NOTE: the mesh-vs-Gaussian-splat choice is a FLAGGED RETURNABLE
+FORK (section 7G) — we chose MESH (Plan A); if it fails, 7G holds Plan B (Gaussian Splatting)
+ready to resume without re-deriving. Prior-session STRATEGIC RESULT: the pipeline ENDPOINT is decided — a PHOTOREAL
 RELIGHTABLE TEXTURED MESH (mesh-for-light + registered points-for-truth, "#3 synthesis"),
 produced via the professional VFX pipeline (LiDAR geometry + camera-texture reprojection ->
 delight -> PBR -> offline render). See sections 7E (the decision + why) and 7F (the 6-stage
@@ -273,6 +281,13 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
 | RTAB-Map colour (Way B) | ⏸ NOT NEEDED for now: Way A proved colour-in-map works. Way B (camera_info+TF) reserved for texture/mesh path. See 7D/7F. |
 | PIPELINE ENDPOINT decided | ✅ Photoreal relightable TEXTURED MESH (#3: mesh-for-light + points-for-truth). See 7E. |
 | VFX pipeline + software mapped | ✅ 6-stage pro pipeline + tools (RealityScan/Agisoft De-Lighter/Blender). See 7F. |
+| ⚠️ FORK: Mesh(A) vs Splat(B) | CHOSE MESH (Plan A). Flagged returnable decision in 7G. If mesh fails -> return to 7G for Plan B (Gaussian Splatting), held in reserve. |
+| Texture probe (Plan A test) | ✅ 2026-08-19: texture works, photoreal where geometry clean (69% cov vs 2.6% per-point). Limiter = MESHING. See 7G. |
+| Texturing method decided | ✅ PER-SHOT (local projection), not global-UV. Fits stills deliverable, avoids UV artist-hours. See 7H. |
+| Per-shot texturing tool | ✅ BUILT+debugged (per_shot_texture.py): mesh + project image from pose + multi-view best-image-per-face. See 7H. |
+| DB->texture bridge | ✅ BUILT+tested (db_to_texture.py): capture.db -> mesh -> multi-view texture, end to end. See 7H. |
+| IMAGE-SAVING capture | ✅ PROVEN ON RIG 2026-08-19 (v2): 10/10 nodes with scan+image+calib. Full chain real. See 7H. |
+| Trimmed Poisson (photoreal) | ✅ 92.5% coverage, photoreal — the mesh for texture. Ball-pivoting too holey. See 7H. |
 | Mesh melt fear tested | ✅ Poisson blobs (max 1556mm off) vs ball-pivoting honest (0mm) on our real cloud. Edge-preserving meshing avoids melt. See 7E. |
 | Camera upgrade | ⬜ researching (trigger camera → kills tau) |
 | Downstream (mesh/UE/relight) | ⬜ after first maps |
@@ -659,6 +674,419 @@ have or have scoped. Per-point colour (Way A/B) is downgraded to a quick preview
 OPEN QUESTION (not yet answered): does the operator already work in a 3D DCC (Blender/Maya/
 C4D)? Decides whether to target "clean data into Blender" specifically or stay tool-agnostic.
 
+
+═══════════════════════════════════════════════════════════════════════════
+## 7G. ⚠️ DECISION FORK — MESH (Plan A) vs GAUSSIAN SPLATTING (Plan B) ⚠️
+═══════════════════════════════════════════════════════════════════════════
+COLD READER: THIS IS A FLAGGED, RETURNABLE DECISION POINT. We stood at a fork and
+CHOSE MESH (Plan A). If Plan A fails, DO NOT re-derive from scratch — return HERE, to
+this exact reasoning and these exact circumstances, and pick up Plan B (Gaussian
+Splatting) which is documented and waiting below. This section exists so a failure of
+Plan A costs a PIVOT, not a re-investigation.
+
+### THE FORK (what was decided, when, why)
+Decided 2026-08-18/19. Two ways to turn the LiDAR+camera capture into a photoreal,
+relightable, manipulatable 3D asset:
+  PLAN A — TEXTURED MESH (CHOSEN): mesh the LiDAR geometry (edge-preserving, not
+    Poisson), drape the camera images as TEXTURE (all pixels), assign PBR materials,
+    relight fresh in Unreal/offline renderer. 
+  PLAN B — GAUSSIAN SPLATTING (NOT CHOSEN, held in reserve): photoreal real-time
+    scene from the same camera+LiDAR capture.
+
+### WHY MESH WAS CHOSEN (the reasoning to re-examine if backtracking)
+  1. OPERATOR'S DECIDING PRINCIPLE: "lighting always interacts with surfaces." Physical
+     predictive relighting NEEDS surfaces -> mesh. Points/splats aren't surfaces.
+  2. GS BAKES LIGHTING IN. Relightable-GS is research-only (Relightable 3DG NeurIPS'23,
+     LumiGauss WACV'25), NOT in any commercial DCC as of 2026. GS also doesn't participate
+     in Unreal LUMEN GI (only shadow-proxy hacks, Volinga). Our tool's whole job is
+     RELIGHTING (day->night), which is exactly GS's weakest area.
+  3. Mesh is editable/measurable, inherits LiDAR 16mm accuracy, Unreal-native.
+  4. The "melted mesh" fear (PolyCam) was shown to be a SOLVABLE meshing-parameter problem
+     (Poisson blobs vs ball-pivoting honest — tested on our data), not a dealbreaker.
+
+### CIRCUMSTANCES AT THE FORK (so you can judge if they've changed on return)
+  - Goal: CLIENT-FACING photoreal relightable STILLS (operator's professional name on them),
+    heavy art pass OK, operator-manipulated, not real-time.
+  - Reference tool: Set.A.Light (physics lighting previz). Precedent: Cine Tracer (Unreal
+    cinematography sim) proves lighting-sim-on-Unreal is buildable.
+  - As of the fork, GS relighting was immature. **RE-CHECK THIS ON RETURN** — GS relighting
+    is moving fast; if commercial relightable-GS exists when you read this, Plan B's main
+    disqualifier may be GONE. That single fact could flip the decision.
+
+### WHAT WOULD TRIGGER BACKTRACKING TO PLAN B (define failure of Plan A now)
+Flag Plan A as failing and RETURN HERE if:
+  - meshing cannot produce clean enough surfaces for photoreal texture DESPITE reasonable
+    effort (persistent melt/shred that tuning + density don't fix), OR
+  - the mesh+texture+material+relight pipeline proves too labor-heavy per location to be
+    viable as a product, OR
+  - commercial relightable-GS + Unreal-Lumen-GS integration matures (re-check on return).
+
+### PLAN A PROGRESS (evidence for/against, updated as we climb)
+  2026-08-19 TEXTURE PROBE (encouraging FOR Plan A): meshed a real dense cloud (161k pts,
+  ball-pivoting) + projected the full camera image as texture. Result: 69% frame coverage
+  (vs 2.6% per-point) and WHERE GEOMETRY IS CLEAN IT LOOKS PHOTOREAL (framed painting, wall
+  molding, wallpaper, checkerboard all crisp — see outputs/texture_probe.png). CONFIRMS
+  texture is the right path for usable quality. LIMITER identified: MESHING quality — black
+  "shredded" zones are meshing failures (ball-pivoting struggling), NOT texture failures.
+  => Plan A's remaining risk is concentrated in MESHING. If meshing can't be cleaned up,
+  that's the trigger to re-examine this fork. So far: promising, not proven.
+
+### IF RETURNING TO PLAN B (Gaussian Splatting) — WHERE TO START
+  - The SAME capture (LiDAR + calibrated camera + poses) feeds GS — NOTHING upstream wasted.
+  - Research entry points recorded 2026-08-18 (see 7E/7F history): relightable-GS papers,
+    Volinga (Unreal GS plugin), THE FUTURE 3D (does LiDAR points + GS hybrid for VP).
+  - GS geometric accuracy alone ~8cm -> would still use our LiDAR as the geometry anchor
+    (hybrid: GS appearance + LiDAR truth). That hybrid is the likely Plan B shape.
+  - First Plan-B action: re-check commercial relightable-GS maturity; if viable, prototype
+    a GS scene from one dense pose + images and test relighting in Unreal.
+
+═══════════════════════════════════════════════════════════════════════════
+## 7H. TEXTURING PIPELINE — BUILT + IMAGE-SAVING CAPTURE PROVEN (2026-08-19)
+═══════════════════════════════════════════════════════════════════════════
+COLD READER: this section is the big practical result of the 2026-08-19 session —
+the per-shot texturing pipeline is BUILT end-to-end and the image-saving capture is
+PROVEN on the rig. This is how the project gets from a capture to a photoreal textured
+render. Endpoint context is 7E/7F; the mesh-vs-splat fork is 7G; this is the working
+Plan-A texturing machinery.
+
+### THE DECISION: PER-SHOT (LOCAL) TEXTURING, not global-UV texturing
+Chosen 2026-08-19. Two ways to texture the mesh:
+  - GLOBAL: one clean UV unwrap + bake all images into one texture set. Reusable from any
+    angle, but LOTS of skilled-artist UV hours (hand-tuning seams/layout/texel density).
+  - PER-SHOT (CHOSEN): project the real photos onto the mesh FROM their known camera
+    poses, per hero viewpoint. Little/no manual UV work (the projection defines the
+    mapping). Fits the deliverable (operator makes STILLS from chosen viewpoints, heavy
+    art pass per shot OK). Downside: not one reusable asset — re-texture per shot.
+  UV BRIEF (for the cold reader): "UV" = the map from 2D image pixels onto 3D surface.
+  Global texturing's main cost is ARTIST HOURS hand-tuning UV layouts, NOT compute/render.
+  Per-shot projection avoids most of that. Unreal/Lumen still needs TEXTURE UVs downstream
+  but NOT lightmap UVs (Lumen is dynamic) — see 7F.
+
+### THE TEXTURE PROBE — proved texture (not per-point colour) is the path (real data)
+On a real dense cloud (dense_test, 161k pts, 6.9mm spacing, 3.3mm surface thickness):
+  - per-point colour samples only ~2.6% of the image -> sparse dots, NOT usable (this is
+    why the coloured cloud looked bad — per-point colour tops out short of usable).
+  - TEXTURE (project the FULL image onto the meshed surface): 
+      ball-pivoting mesh  -> 69% coverage but SHREDDED (holes) — non-uniform point
+        spacing (10.9x variation) defeats fixed-radius ball-pivoting.
+      TRIMMED POISSON mesh -> 92.5% coverage and PHOTOREAL where geometry is clean
+        (framed painting, wall molding, wallpaper, checkerboard all crisp).
+  => KEY RESULT: mesh+texture LOOKS PHOTOREAL. The limiter is MESHING quality, not colour.
+     Trimmed Poisson (depth 9, trim ~5% low-density) is the mesh for texture (continuous
+     surfaces). Ball-pivoting is honest but too holey for texture. Evidence images in
+     outputs: texture_probe.png (ball-pivot, shredded), texture_probe_poisson.png (photoreal).
+  HONEST LIMIT: single-image texture is photoreal NEAR the capture viewpoint; moving the
+  view (parallax) smears surfaces the camera saw edge-on and leaves unseen areas black
+  (per_shot_top.png shows this). => need MULTI-VIEW coverage — which the 270-pan provides.
+
+### TOOLS BUILT THIS SESSION (all in outputs/, cold-tested)
+  - per_shot_texture.py — the texturing tool: cloud -> trimmed-Poisson mesh (w/ statistical
+    outlier removal) -> project image(s) from camera pose -> render from chosen viewpoint.
+    Debugged: outlier removal (fixed a pose that meshed sparse from 5 stray far points),
+    camera-visibility guard checks X AND Y, empty-cloud guard. Has MULTI-VIEW functions:
+    compose_world_to_cam (world pose + extrinsic -> world->cam, math verified to 1e-16),
+    best_image_per_face (picks best image per face by head-on angle + visibility).
+    KNOWN LIMIT: pure-Python rasteriser is slow (~380k tris); fine for stills, a real
+    offscreen renderer would be faster later.
+  - db_to_texture.py — THE BRIDGE: reads a capture .db (SQLite) -> poses + scans (always)
+    + images (when present) -> assembles world cloud -> mesh -> feeds per_shot_texture's
+    multi-view selection. Tested end-to-end on color_stationary db (no-image path) AND
+    with injected real images (texture path, 98% faces textured). Handles both cases.
+  - camera_info_publisher.py (on Jetson ~/) — publishes vetted intrinsics on
+    /camera/camera_info stamped to match /image_raw. Rig-tested, works.
+  - rtab_capture.sh — basic PROVEN capture launcher (geometry+colour only, NO images).
+  - rtab_capture_with_images.sh v2 — image-saving capture (see below). On Jetson ~/.
+
+### IMAGE-SAVING CAPTURE — *** PROVEN ON THE RIG 2026-08-19 *** (the milestone)
+The capture that saves camera IMAGES into the rtabmap db alongside geometry+poses, so the
+db is a self-contained textureable asset. This is what per-shot texturing + the pan need.
+PIPELINE (one script, rtab_capture_with_images.sh v2, runs from ONE terminal):
+  camera_info_publisher + static TF(unilidar_lidar->camera_frame) + rgb_sync
+  (/image_raw + /camera/camera_info -> /rgbd_image) + lidar3d.launch w/ rgbd_image_topic.
+V1 FAILED (empty db, 0 nodes): rgb_sync never produced /rgbd_image. TWO bugs found:
+  1. approx_sync with max_interval=0 didn't match -> FIX: exact sync (approx_sync:=false),
+     since camera_info is stamped to EXACTLY match /image_raw.
+  2. hardcoded frame_id "camera_link" was WRONG -> the real /image_raw frame is
+     'camera_frame'. FIX: v2 DETECTS the frame_id from /image_raw at runtime.
+V2 also GATES: if /rgbd_image isn't publishing it EXITS (prints logs) instead of launching
+  RTAB into a doomed empty capture (v1's silent-failure trap). camera_info publish is also
+  gated. v2 = 110 lines, on Jetson.
+V2 RESULT (imgtest2.db, stationary test): 10 nodes, ALL 10 with SCAN + IMAGE (~560KB each,
+  full-res) + CALIBRATION. COMPLETE textureable capture. The empty-capture failure is SOLVED.
+  => the full chain is now real+proven: rig -> rtab_capture_with_images.sh -> capture.db
+     (geometry+images+poses+calib) -> db_to_texture.py -> textured mesh. Every link tested.
+
+### THE 270 PAN (planned, now UNBLOCKED)
+Purpose: texturing-COVERAGE capture — every surface photographed near head-on by some frame
+(fixes the single-image parallax/smear limit). Plan: ONE smooth continuous ~270 deg sweep
+over ~45s (~6 deg/s) — slow favours sharp images (no motion blur), dense LiDAR, easy
+odometry; only heat favours fast. Smooth/continuous, no jerks. Erring slower if the live
+image shows blur. GATED behind image-saving working — which is now PROVEN, so the pan is
+unblocked. NOT yet done (still bench/stationary only). Next real hot window = the pan.
+NOTE the earlier stationary pan (color_stationary) saved NO images (basic capture); the pan
+must use rtab_capture_with_images.sh (v2) so images+poses are saved for texturing.
+
+═══════════════════════════════════════════════════════════════════════════
+## 7I. CAPTURE EXPERIMENT — B (stationary) vs A (moving), PARAMETERS + RESULTS
+═══════════════════════════════════════════════════════════════════════════
+COLD READER: this section defines a two-arm capture experiment and holds its
+results. GOAL: capture the SAME space two ways — stationary (B) and moving (A) —
+and COMPARE the textured output, to MEASURE the cost of the motion-timing limit
+(the tau-limit, see 7B/7C). "Differing data for better forensics." Both feed the
+per-shot texturing pipeline (7H: rtab_capture_with_images.sh v2 -> capture.db ->
+db_to_texture.py -> textured mesh).
+
+### WHY THIS EXPERIMENT (the reasoning, so it isn't lost)
+The ~1s odometry latency + "image pose will not be synchronized with odometry"
+warning (measured this session) are the tau-limit of the UN-TRIGGERED B0578 made
+concrete (see 7B: colour-on-motion is tau-limited; fine for slow/stationary; the
+trigger-camera fork fixes it later). So:
+  - STATIONARY (B): no motion -> pose-lag is harmless -> CLEAN reference. Plays to
+    the camera's actual strength. Already PROVEN (imgtest2.db, 10/10 nodes).
+  - MOVING (A): inherits ~1s pose-lag -> at rotation speed this = a few degrees of
+    image-to-pose misregistration. This is the tau cost we want to SEE/measure.
+Comparing B (clean) vs A (motion) MEASURES the tau cost on real texturing output —
+evidence for the trigger-camera-fork decision, not just theory.
+
+### SHARED CONSTRAINTS
+  - LiDAR uptime budget: 60s USABLE PER SAMPLE (spin-up ~15s is NOT counted).
+  - Each capture = its own window, SEPARATE for heat (L2 heat-sensitive).
+  - Capture tool: rtab_capture_with_images.sh v2 (gated, exact-sync, frame auto-
+    detect, BUG3 cleanup trap). PROVEN on rig this session (stationary).
+  - Same space, captures close in time (same scene/lighting; only method differs).
+  - Verify db after each: nodes have BOTH pose AND image (the textureable check).
+
+### ARM B — STATIONARY SET (clean reference) — PARAMETERS
+  - 14 stop points, ~4s each (brief settle + ~30-scan accumulation per stop).
+  - 60s usable total. Keep LiDAR spinning between stops; move briskly; hold still ~4s.
+  - Each stop = one accumulate-and-save (posed image + dense cloud).
+  - Proven method (stationary image-saving works) -> NO de-risk window needed.
+  - EXPECTED: clean posed images, no motion misregistration; multi-view coverage
+    from 14 viewpoints.
+
+### ARM A — MOVING PAN (motion comparison) — PARAMETERS
+  Staged: A-TEST first (de-risk), THEN A-FULL.
+  A-TEST (own small window, ~15s usable): short slow turn (~45-90deg). GATE before
+    A-FULL: (1) odometry holds under rotation (ratios sane, no drift/abort in log),
+    (2) images SHARP (pull a frame, eyeball blur). If blur -> slow down / abort A.
+  A-FULL — two forms; CHOSEN = A2 (out-and-back) for forensics:
+    A1 single 270 sweep: 270deg over ~55s = ~4.9deg/s. (coverage-only; NOT chosen)
+    A2 OUT-AND-BACK (CHOSEN): 135deg out (~30s) + 135deg back (~30s) = 60s, ~4.5deg/s
+       each way. Gives BOTH:
+         - tau SIGN-FLIP: motion-timing error shifts along direction of travel, so
+           it flips sign out vs back -> confirms it's TIMING (not calibration) and
+           brackets the true position.
+         - RETURN-TO-START DRIFT: end pose should equal start pose (physically back
+           at origin); the difference = accumulated odometry drift, measured directly.
+  - EXPECTED: images misregistered by ~(1s x angular rate) = a few degrees; tau
+    error visible + opposite-signed on the two legs; some odometry drift.
+
+### RESULTS — B (stationary)   [ CAPTURED 2026-08-19, SUCCESS ]
+  - db file: sampleB_191122.db (28 stops out-and-back, ~4s each; RTAB made 64 keyframes)
+  - nodes total: 64 | with pose+image+calibration: 64/64 (ALL textureable)
+  - pose spread: small translations (x16cm y38cm z19cm) = rotation-in-place, as expected
+  - texturing coverage (db_to_texture.py multi-view): 99% faces (447901/450304),
+    mean head-on 0.63. Assembled world cloud 159,439 pts -> mesh 450k tris.
+  - VISUAL verdict: PHOTOREAL. Single-node render (outputs/sampleB_render.png) shows
+    chandelier, framed portrait reading correctly ON the wall, crown molding following
+    ceiling, appliances through pass-through, patterned chairs, curtained window. Texture
+    lands CORRECTLY on geometry, no gross misregistration. THE PIPELINE ENDPOINT PROVEN
+    on real stationary capture data (rig -> capture.db -> mesh -> texture -> photoreal).
+  - notes: render shown was ONE node's single sparse scan (2506 pts) meshed alone ->
+    ragged black border is that single scan's mesh boundary, NOT a texture fault.
+  - *** CRITICAL FINDING (user caught it): the MULTI-VIEW ASSEMBLY IS BROKEN. *** User
+    panned across a whole side of the room but it's MISSING from the result. Cause:
+    ODOMETRY UNDER-TRACKS ROTATION. DB pose yaw spread is only ~14.5deg across all 64
+    nodes despite physically panning 90deg+. So the images are real but their POSES
+    under-represent rotation ~8x -> far side of room collapses onto near side. The
+    single-node render looked photoreal because ONE node is internally consistent; the
+    CROSS-NODE assembly is wrong. So B (done as a stop-and-go PAN = rotation) is NOT a
+    clean stationary capture — it hit the rotation-tracking failure. 99% "coverage" was
+    misleading (images assigned, but to wrong poses). A truly stationary capture (hold
+    still, physically relocate, hold still — minimal rotation-while-tracking) would be
+    the real clean B. See 7J for the rotation-tracking diagnosis.
+
+### RESULTS — A-TEST (moving de-risk)   [ TO FILL ]
+  - odometry under rotation (ratios / any drift or abort?):
+  - image sharpness (blurred? at what speed?):
+  - GATE decision (proceed to A-full? / slow down? / abort?):
+
+### RESULTS — A-FULL (out-and-back)   [ TO FILL ]
+  - db file / date / actual sweep (deg each way, duration):
+  - nodes total / with pose+image:
+  - texturing coverage (%):
+  - tau sign-flip observed? (error direction out vs back):
+  - return-to-start drift (start pose vs end pose delta):
+  - VISUAL verdict vs B (how much worse is motion?):
+  - notes:
+
+### COMPARISON / CONCLUSION   [ TO FILL after both ]
+  - B vs A textured-result difference (the measured tau cost):
+  - is A "good enough" for the slow regime, or does motion clearly hurt?:
+  - implication for the trigger-camera fork (7B) priority:
+
+═══════════════════════════════════════════════════════════════════════════
+## 7J. ⚠️ ODOMETRY UNDER-TRACKS ROTATION — diagnosis (2026-08-19), NEXT: TF/deskew
+═══════════════════════════════════════════════════════════════════════════
+COLD READER: the moving/panning capture (Sample B done as a stop-and-go pan) revealed
+that RTAB's LiDAR odometry SEVERELY UNDER-MEASURES ROTATION. Physical ~90deg+ pan ->
+only ~14deg recorded in the node poses. This makes any ROTATING capture (incl. the
+planned A pan) produce WRONG poses -> broken multi-view assembly (far side of room
+collapses onto near side). MUST be fixed before A (moving) is viable. Stationary-only
+captures (no rotation while tracking) are unaffected.
+
+### EVIDENCE (from icp_odometry logs during the pan — multiple samples agree)
+  - ratio 0.60-0.68 (HEALTHY — ICP finds good correspondences, not struggling)
+  - rotational std dev ~0.007 rad (~0.4deg — ICP is CONFIDENT about its rotation est.)
+  - delay ~0.5s (modest; NOT the ~1s of the image-test; not growing)
+  - update time ~0.04-0.07s (fast compute)
+  - NO "Lost"/reset/registration-failed messages
+  => ICP is CONFIDENT but WRONG about rotation magnitude. Confident+wrong-magnitude on
+     rotation = a GEOMETRIC/DESKEW problem, NOT compute, NOT matching, NOT latency.
+
+### RULED OUT (important — don't chase these)
+  - Fusion-node latency: delay only ~0.5s here + ICP healthy. Vectorizing the fusion
+    node (its per-point Python loops ARE slow — benchmarked ~12x speedup available,
+    40ms->3.5ms colorize) is a REAL but SEPARATE latency win; it does NOT fix rotation
+    under-tracking. (We nearly fixed this wrong thing; the odometry sample redirected us.)
+  - ICP registration failure: ratio healthy, confident, no resets. Not this.
+
+### PRIME SUSPECTS (the actual cause — to confirm next session, mostly cold)
+  1. SCAN DESKEW failing under rotation. The L2 sweeps points over ~40ms while rotating;
+     correct deskew uses per-point 'time' + sensor motion to un-warp the sweep. If deskew
+     is off/wrong, a rotating sweep is warped so consecutive scans look TOO SIMILAR ->
+     ICP sees LESS rotation than occurred. Matches "confident but small" exactly.
+  2. THE SPLIT TF TREE (appears in EVERY capture, likely the root):
+     "Could not find a connection between 'icp_odom' and 'unilidar_lidar' ... two or more
+     unconnected trees." Deskew needs the TF chain to know how the sensor moved during
+     the sweep. Broken tree -> deskew can't compensate -> rotation under-measured.
+     Our static TF (unilidar_lidar->camera_frame) is a SEPARATE branch not linked to the
+     odom frame. LIKELY the two suspects are the SAME root: split tree breaks deskew.
+
+### NEXT STEPS (next session — investigate BEFORE changing anything)
+  1. [needs rig up] capture the TF tree: `ros2 run tf2_tools view_frames` (makes a PDF
+     diagram) OR `ros2 topic echo /tf_static --once` + `/tf --once` -> SEE the disconnect.
+  2. [cold] read lidar3d.launch: what odom_frame_id / base frame does icp_odometry use vs
+     what RTAB expects (frame_id:=unilidar_lidar)? The mismatch is likely the split.
+  3. [cold] confirm deskewing is actually ON and has time field + valid TF to work.
+  4. Fix the TF tree so icp_odom connects to unilidar_lidar -> deskew works -> re-test a
+     small rotation to confirm poses now track the true angle BEFORE re-attempting A.
+  DEPTH-IMAGE WARNING ("sensor data doesn't have depth/right image") = COSMETIC
+  (rtabmap_viz wants depth we don't have; RGB+scan is correct). Not related. Ignore.
+
+### *** CONTROLLED TEST RESULT (2026-08-19): FUSION NODE RULED OUT ***
+User's instinct: run PLAIN RTAB on raw /unilidar/cloud (no fusion node, no camera path,
+no our colorized cloud) and pan — does vanilla RTAB track rotation? Result
+(plainRTAB_200724.db, 45 nodes, ~90deg+ physical pan):
+  yaw spread = 12.7deg  (colorized run was 14.5deg — ESSENTIALLY IDENTICAL)
+  Same signature: confident, smooth, out-and-back shape, magnitude compressed ~7-8x.
+=> THE FUSION NODE IS NOT THE CAUSE. Ruled out cleanly in one window. The rotation
+   under-tracking is in RTAB / ICP-odometry / deskew / the L2 cloud itself — NOT anything
+   we built. Big narrowing (eliminates the whole colorized-path branch).
+
+### NARROWED SUSPECTS (post-controlled-test)
+  1. L2 SPARSE NON-REPETITIVE CLOUD vs ICP: the L2 is a rosette scanner (~5,400 pts/scan,
+     sparse, non-uniform). ICP on sparse non-repetitive scans can fail to CONSTRAIN
+     ROTATION while still looking confident — not enough consistent frame-to-frame
+     structure to pin the angle. This is a known weak spot of low-density LiDAR + ICP.
+  2. RTAB deskew handling of the L2 cloud (time-field units / deskew assumption). Raw
+     cloud has its native time field, so if deskew fails it's RTAB's handling, not us.
+  3. => STRONGEST LEAD: IMU FUSION. The L2 has an onboard IMU (251Hz, see 7C, currently
+     PAUSED/unsolved). ICP is bad at rotation from sparse scans; an IMU measures rotation
+     DIRECTLY and well. Fusing IMU into odometry is the CLASSIC fix for exactly this
+     symptom. The paused 7C IMU work is likely the real path to fixing the pan. NEXT
+     SESSION should probably resume IMU integration with THIS as the concrete motivation.
+
+### *** RE-WEIGHTED DIAGNOSIS (more log evidence, 2026-08-19 late) ***
+More log detail changed the priority order. Key new observations:
+  1. The split-tree warning fires EVERY cycle AND is tied to a specific failing call:
+     "getMovingTransform() ... movement of unilidar_lidar according to fixed icp_odom ...
+     not part of the same tree." RTAB is actively TRYING to compute the sensor's motion
+     (needed for deskew + pose propagation) and FAILING because the tree is split. This
+     is NOT cosmetic.
+  2. The split tree appears in the PLAIN-RTAB run TOO (raw cloud, no fusion node, no our
+     camera static TF). => the split is in the BASE lidar3d.launch frame config, NOT our
+     static TF as previously assumed. CORRECTION to earlier note that blamed our TF.
+  3. Loop closures rejected "Not enough features in images (old=0...)" — old node shows
+     ZERO features => stored image data not usable for matching in the colorized run;
+     consistent with the "image pose will not be synchronized with odometry" warnings.
+
+REVISED SUSPECT ORDER (test the cheap one FIRST):
+  A. [NEW TOP SUSPECT] SPLIT TF TREE in the base launch: icp_odom and unilidar_lidar are
+     in separate trees, so RTAB can't compute unilidar_lidar's motion vs icp_odom ->
+     breaks deskew / motion propagation -> rotation mis-tracked. This is a LAUNCH-CONFIG
+     issue (present even in plain RTAB), plausibly fixable WITHOUT the IMU. TEST THIS FIRST:
+       - get the TF tree (ros2 run tf2_tools view_frames while running) to SEE the two
+         islands and what frame icp_odometry publishes odom against.
+       - read lidar3d.launch: does icp_odometry publish odom_frame/base as unilidar_lidar,
+         or a different frame that never connects? Fix so the chain is:
+         icp_odom -> (odom) -> unilidar_lidar, one connected tree.
+       - re-test a small rotation; if yaw now tracks the true angle, THIS was it.
+  B. [STILL POSSIBLE] sparse L2 cloud limits ICP rotation -> IMU fusion (7C) needed.
+     Only pursue if fixing the TF tree does NOT restore rotation tracking. IMU is the
+     heavier fix; try the free TF-config fix first.
+
+### VIZ OBSERVATION TASK (next session, free — no extra heat)
+When re-running, SET UP THE VIEW BEFORE panning so you can watch the diagnosis live:
+  - ZOOM OUT the rtabmap_viz 3D map panel before starting the pan (this session the
+    window was too short to zoom — set it up first next time).
+  - THE KEY THING TO WATCH: as you physically pan ~90deg, does the 3D MAP SWING ~90deg
+    with you, or does it stay roughly FIXED while you turn? 
+      map swings with you   -> rotation IS tracking live (problem only in saved poses)
+      map stays put/barely moves -> you're WATCHING the rotation-under-track happen live
+    This is the visual version of the pose-yaw-compression bug (7J). Costs no heat.
+  - NOTE from this session: user saw LiDAR reacting to movement the whole time (data
+    live/responsive, good) and the image/side panels "changed color but never produced
+    an image." For the PLAIN-RTAB run that's expected (no camera fed). For a COLORIZED
+    run the camera panel SHOULD show the room; "no image" there would corroborate the
+    image-not-usable warnings (old=0 features, depth-image warnings). Confirm which panel
+    behaviour goes with which run next time.
+
+### *** ROOT CAUSE FOUND (2026-08-20, from the launch file itself) ***
+Read lidar3d.launch.py frame/odom config directly. THE LAUNCH IS ARCHITECTED FOR A
+LiDAR+IMU RIG, and we run it LiDAR-ONLY. That is the root cause of ALL the symptoms.
+Key lines:
+  - L90: 'deskewing': not fixed_frame_id and deskewing  # deskew path depends on fixed_frame_id
+  - L57-63: fixed_frame_id is created as frame_id+"_stabilized" ONLY when imu_used.
+    No IMU -> fixed_frame_id is EMPTY.
+  - L91-92: 'odom_frame_id':'icp_odom', 'guess_frame_id': fixed_frame_id
+    Empty fixed_frame_id -> guess_frame_id EMPTY -> ICP has NO ROTATION PRIOR (pure
+    scan-to-scan, no motion guess) -> under-tracks rotation on the sparse L2 cloud.
+  - L102: 'wait_imu_to_init' (IMU-centric init) — the whole design assumes an IMU.
+MECHANISM (one cause, every symptom):
+  no IMU -> no fixed/_stabilized frame -> (a) ICP gets no rotation guess -> confidently
+  under-measures rotation (the ~8x yaw compression), AND (b) the _stabilized frame that
+  would connect icp_odom to the unilidar_lidar chain is absent -> SPLIT TF TREE ->
+  getMovingTransform() fails -> deskew/motion-propagation broken. The split tree and the
+  rotation under-count are the SAME missing-IMU root, not two separate bugs.
+=> THE FIX IS THE IMU (7C), and it is NOT a "fallback" — it is the piece THIS LAUNCH IS
+   DESIGNED AROUND. The L2 has a 251Hz IMU already. Wiring it in should simultaneously:
+   (1) give ICP its rotation prior -> rotation tracks; (2) create the _stabilized fixed
+   frame -> TF tree connects -> deskew works -> getMovingTransform() succeeds.
+   7C changes from "paused/maybe" to "THE concrete unblock for the pan."
+
+### NEXT SESSION — RESUME 7C IMU INTEGRATION (now the critical path)
+  Per the launch header (L9-12): needs TF between lidar/base and imu frame, and an IMU
+  orientation via imu_filter_madgwick (use_mag:=false publish_tf:=false). Steps:
+   1. confirm the L2 IMU topic is publishing (/unilidar/imu per PART? sensor facts) +
+      its frame_id + that it has orientation or needs madgwick to compute it.
+   2. static TF unilidar_lidar<->unilidar_imu (measure/again from datasheet).
+   3. run imu_filter_madgwick (use_mag:=false, publish_tf:=false) -> oriented IMU.
+   4. launch lidar3d with imu_topic:=... so fixed_frame_id becomes frame_id+"_stabilized".
+   5. re-test the SAME pan; check node-pose yaw spread now ~matches the physical pan
+      (vs the ~8x under-count). THAT is the pass criterion.
+  Note the RECONSTRUCTION of the broken pan is NOT worth pursuing (poses are missing info;
+  no post-hoc scaling recovers true per-scan orientation — confirmed by a failed x8-yaw
+  attempt). Fix the CAPTURE (IMU), don't try to salvage the broken one.
+
+### IMPACT ON THE B-vs-A EXPERIMENT (7I)
+  - Rotation-tracking must be fixed before A (moving pan) is meaningful — A would inherit
+    the same broken rotation.
+  - The "clean B" should be re-done as TRUE stationary (relocate between holds, minimal
+    rotation-while-tracking) OR after the TF/deskew fix.
+  - The photoreal SINGLE-VIEW result (outputs/sampleB_render.png) still stands as proof
+    the texturing pipeline endpoint works; it's the multi-view POSE assembly that's blocked.
+
 ═══════════════════════════════════════════════════════════════════════════
 ## 8. SESSION UPDATE LOG (append one line per session; values above stay current)
 ═══════════════════════════════════════════════════════════════════════════
@@ -737,3 +1165,57 @@ C4D)? Decides whether to target "clean data into Blender" specifically or stay t
   goal; everything else (delight/relight/Unreal/handoff) is downstream. Files: colorized_fusion
   _node_v3.py (deployed), color_stationary_assembled.ply, color_map_render.png. No walk yet
   (still benched). Camera colour = preview layer; texture path is where usable quality lives.
+- 2026-08-19 (cont): TEXTURING PIPELINE BUILT + IMAGE-SAVING CAPTURE PROVEN ON RIG.
+  Decided PER-SHOT (local projection) texturing over global-UV (fits stills deliverable,
+  avoids UV artist-hours). Texture probe on real dense data: per-point colour 2.6% (dots,
+  unusable) vs TEXTURE 92.5% photoreal (trimmed Poisson mesh; ball-pivoting shreds).
+  Limiter = MESHING, not colour. Built per_shot_texture.py (mesh+project+multi-view
+  best-image-per-face, debugged: outlier removal, XY guard, empty guard; pose composition
+  math verified 1e-16) and db_to_texture.py BRIDGE (capture.db -> mesh -> texture, tested
+  end-to-end). Built + PROVED rtab_capture_with_images.sh v2 on the rig: v1 failed (empty
+  db) due to (1) approx_sync not matching -> exact sync, (2) hardcoded frame 'camera_link'
+  wrong -> real frame 'camera_frame', now auto-detected; v2 also GATES on /rgbd_image so it
+  can't silently build an empty map. Result imgtest2.db = 10/10 nodes with scan+image
+  (~560KB)+calibration = complete textureable capture. Full chain now real: rig ->
+  rtab_capture_with_images.sh -> capture.db -> db_to_texture.py -> textured mesh. The 270
+  pan is UNBLOCKED (was gated on image-saving). Files in outputs: per_shot_texture.py,
+  db_to_texture.py, rtab_capture_with_images.sh (v2), rtab_capture.sh, texture_probe*.png,
+  per_shot_*.png. Also researched Unreal integration (Nanite ingests scan geometry, Lumen
+  relights — need TEXTURE UVs not lightmap UVs; middle-pipeline PBR-map tool like Marmoset/
+  Substance still required — Lumen consumes maps, doesn't make them). Ruled OUT Stable
+  Projectorz (AI-invents texture, wrong for real-capture predictive tool).
+- 2026-08-19 (cont): Investigated the ~1s odometry DELAY (icp_odometry delay~0.99s,
+  CONSTANT not growing = fixed latency, not queue overflow). Found it's the KNOWN
+  tau-limit of the un-triggered B0578 (7B) made concrete: RTAB warned "image pose
+  will not be synchronized with odometry" + a split TF tree (icp_odom vs
+  unilidar_lidar). BUT imgtest2.db check: all 10 nodes have valid pose+image =
+  stationary capture is fine (nothing moved). The delay only hurts MOVING capture
+  (pose lags ~1s = a few deg at rotation speed). Connected to prior tau work
+  (transcript 2026-08-17): the fusion node already timestamp-pairs (slop 0.04s);
+  tau (hardware exposure offset) remains unmeasured + only a trigger camera fixes
+  it (7B fork). Referenced Ouster forum thread on hardware phase-locking (LiDAR-
+  triggers-camera via GPIO encoder-angle) as the endgame technique — but L2 has NO
+  sync GPIO and B0578 has NO trigger (both in 7B), so it's deferred to the trigger-
+  camera fork, as already decided. DEFINED the B-vs-A capture experiment (7I) with
+  full parameters + result placeholders: B=14 stationary stops (~4s each, 60s,
+  clean reference, proven), A=out-and-back moving pan (135deg out+back, ~4.5deg/s,
+  60s, gives tau sign-flip + return-to-start drift), A gated behind a ~15s moving
+  test. 60s usable uptime PER SAMPLE (spin-up excluded), separate windows for heat.
+  Next session: run B, then A-test, then A-full; fill 7I results; compare textured
+  output to MEASURE the tau cost. Also: rtab_capture_with_images.sh v2 PROVEN on rig
+  (10/10 nodes w/ images) — the empty-capture failure is SOLVED.
+- 2026-08-19 (cont): Ran Sample B (stop-and-go pan, 28 stops out-and-back). DB=64 nodes,
+  ALL 64 with pose+image+calib; bridge textured 99% faces; SINGLE-node render is PHOTOREAL
+  (chandelier, framed portrait on wall, molding, appliances — pipeline endpoint PROVEN on
+  real data, outputs/sampleB_render.png). BUT user caught that a whole side of the room is
+  MISSING from the multi-view result. Diagnosis (7J): ODOMETRY UNDER-TRACKS ROTATION — 64
+  node poses span only ~14.5deg yaw despite a 90deg+ physical pan (~8x under-count). From
+  icp_odometry logs: ratio 0.60-0.68 (healthy), std dev ~0.007rad (confident), delay ~0.5s
+  (modest), no resets => ICP is CONFIDENT but WRONG about rotation magnitude = a DESKEW/
+  geometry problem, NOT latency, NOT ICP failure. RULED OUT fusion-node latency (nearly
+  fixed this wrong thing; a vectorized fusion node is a real ~12x latency win but does NOT
+  fix rotation). PRIME SUSPECT: the split TF tree (icp_odom vs unilidar_lidar unconnected —
+  warned every capture) breaking scan deskew under rotation. NEXT: investigate TF tree
+  (view_frames) + launch odom/base frames + deskew config; fix so rotation tracks true
+  angle BEFORE re-attempting the A pan. Depth-image warning = cosmetic (viz wants depth we
+  don't have). User's odometry-sample instinct is what redirected us from the wrong fix.
