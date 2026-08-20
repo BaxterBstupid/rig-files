@@ -1,4 +1,4 @@
-[MASTER_REFERENCE(5).md](https://github.com/user-attachments/files/31269481/MASTER_REFERENCE.5.md)
+[MASTER_REFERENCE(6).md](https://github.com/user-attachments/files/31274633/MASTER_REFERENCE.6.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
 Last updated: 2026-08-17 (session: framework + RTAB scoping)
@@ -370,9 +370,19 @@ Result: repeated ERRORS, odometry aborts every update. Two linked errors:
 
 ### ROOT CAUSE (traced through the launch file source — see lidar3d_launch_copy on Jetson)
 Two problems, both about missing TF (coordinate-frame transforms):
-  (a) NO STATIC TRANSFORM is published between `unilidar_lidar` and `unilidar_imu`. They
-      are both inside the L2 unit at a fixed offset, but ROS was never told their spatial
-      relationship, so it can't relate IMU data to LiDAR data.
+  (a) *** CORRECTED 2026-08-20 (was: "NO static TF exists" — that was WRONG). ***
+      The DRIVER DOES publish a lidar<->imu TF: reading the driver source
+      (unitree_lidar_ros2.h ~L208) shows it broadcasts imu->cloud INSIDE the IMU callback,
+      with the manufacturer transform. So a transform EXISTS — but it is (i) dynamic/
+      in-callback rather than a clean static TF, (ii) delivered on an IMU path that is
+      HALF-RATE (~250 of 500 Hz) and DROPPING messages (measured 2026-08-20), and (iii) one
+      of the driver's sibling TF broadcasts has a SCRAMBLED QUATERNION (order bug, audit
+      finding #1). So RTAB intermittently can't get the transform "at IMU msg time" ->
+      "TF not available / extrapolation into the future" -> stabilized frame freezes.
+      The problem is NOT absence of a TF; it is an UNRELIABLE one.
+      *** DO NOT naively add a static TF assuming none exists — it may CONFLICT with the
+      driver's existing broadcast (ROS-Answers q366927: a naive static TF BROKE other frames
+      on an equivalent Ouster+RTAB setup). SEE THE TREE FIRST (view_frames), then decide. ***
   (b) When an IMU is supplied, the launch AUTO-CREATES a `unilidar_lidar_stabilized` frame
       (a gravity-levelled frame for "deskewing" = correcting motion distortion within a
       scan). It launches an `imu_to_tf` node to generate that frame and a `lidar_deskewing`
@@ -389,17 +399,27 @@ Two problems, both about missing TF (coordinate-frame transforms):
   then `ros2 node list | grep -i rtabmap` to confirm clean BEFORE relaunching. ALWAYS
   ensure only one instance.
 
-### THE FIX TO TRY NEXT TIME (cold-prep this properly before rig-on)
-Primary fix = publish the missing static transform, in its own terminal, BEFORE launching:
-    ros2 run tf2_ros static_transform_publisher 0 0 0 0 0 0 unilidar_lidar unilidar_imu
-  (args: x y z yaw pitch roll parent child. `0 0 0 0 0 0` = treat IMU as co-located with
-   LiDAR — a fine approximation for a compact unit; refine with the L2's real IMU→LiDAR
-   offset from Unitree docs if available.)
-Then relaunch RTAB (single instance) with imu_topic and deskewing:=false.
-If error #1 (`_stabilized`) persists, the deeper fix is to set the RTAB parameter
-`always_check_imu_tf:=false` (the error message itself suggests this) and/or provide an
-explicit `fixed_frame_id`. This needs cold research in the rtabmap_odom docs — it is a
-TF-plumbing task deserving its own focused, cold-prepped session, NOT live improvisation.
+### THE FIX TO TRY NEXT TIME (cold-prep this properly before rig-on)  [REVISED 2026-08-20]
+The TF EXISTS but is unreliable (see root cause (a)). So the fix order is:
+  STEP 0 — SEE THE TREE FIRST: `ros2 run tf2_tools view_frames` then `cat ~/frames.gv`.
+    Determine whether lidar<->imu is present-but-stale, or double-published/conflicting.
+    This decides which fix is correct and AVOIDS the conflict trap (q366927). Do NOT skip.
+  FIX 1 (cheapest, try first) — `always_check_imu_tf:=false` on the launch. The RTAB warning
+    itself suggests this; our stamps are valid host-time and the transform is ~static, so
+    re-checking it per IMU message is what throws the extrapolation error. One argument.
+  FIX 2 (if a static TF is actually needed) — publish it with the CORRECT value, NOT zeros:
+    ros2 run tf2_ros static_transform_publisher \
+        -0.007698 -0.014655 0.00667 0 0 0 unilidar_lidar unilidar_imu
+    (authoritative lidar->imu transform, unilidar_sdk2 README + glim#248; identity rotation.
+     *** C2 CORRECTION: the old note said "0 0 0 0 0 0 / co-located, fine approximation" —
+     that was WRONG. Use the real offset above. ***)
+    BUT only after STEP 0 confirms it won't conflict with the driver's existing broadcast;
+    if it would, DISABLE the driver's in-callback TF first (or use FIX 1 instead).
+  FIX 3 (fallback) — imu_filter_madgwick republishing a clean /rtabmap/imu at steady rate
+    (canonical per RTAB author + depthai#1147); may also dodge the half-rate/timing issue.
+Then relaunch RTAB (single instance) with imu_topic. Pass criterion: node-pose yaw spread
+matches the physical pan (vs the ~8x under-count). This is a focused cold-prepped task, NOT
+live improvisation.
 
 ### HONEST RECOMMENDATION
 LiDAR-ONLY maps are already EXCELLENT (16mm precision). The IMU is a nice-to-have for
@@ -881,17 +901,20 @@ evidence for the trigger-camera-fork decision, not just theory.
   - EXPECTED: images misregistered by ~(1s x angular rate) = a few degrees; tau
     error visible + opposite-signed on the two legs; some odometry drift.
 
-### RESULTS — B (stationary)   [ CAPTURED 2026-08-19, SUCCESS ]
+### RESULTS — B (stationary)   [ CAPTURED 2026-08-19 — TEXTURING PROVEN, but GEOMETRY ROTATION-CORRUPTED ]
   - db file: sampleB_191122.db (28 stops out-and-back, ~4s each; RTAB made 64 keyframes)
   - nodes total: 64 | with pose+image+calibration: 64/64 (ALL textureable)
   - pose spread: small translations (x16cm y38cm z19cm) = rotation-in-place, as expected
   - texturing coverage (db_to_texture.py multi-view): 99% faces (447901/450304),
     mean head-on 0.63. Assembled world cloud 159,439 pts -> mesh 450k tris.
-  - VISUAL verdict: PHOTOREAL. Single-node render (outputs/sampleB_render.png) shows
-    chandelier, framed portrait reading correctly ON the wall, crown molding following
-    ceiling, appliances through pass-through, patterned chairs, curtained window. Texture
-    lands CORRECTLY on geometry, no gross misregistration. THE PIPELINE ENDPOINT PROVEN
-    on real stationary capture data (rig -> capture.db -> mesh -> texture -> photoreal).
+    *** NOTE: 99% is coverage of a ROTATION-COLLAPSED mesh (world extent 13m tall) - i.e.
+    faces got images, but the underlying geometry is corrupted. Coverage-of-a-bad-mesh. ***
+  - VISUAL verdict: TEXTURING MATH is photoreal WHERE geometry is coherent (chandelier,
+    framed portraits on walls, molding, pass-through appliances, patterned chairs, curtained
+    window all read correctly - see sampleB_render.png / best_render.png). BUT the full-room
+    reconstruction is BROKEN: half the room is missing/warped. NOT a clean deliverable.
+    *** CORRECTION: this is NOT "the pipeline endpoint proven". Texturing is proven; GEOMETRY
+    is rotation-corrupted. Do not cite sampleB as a clean success. See 7K + mesh_shape_views.png. ***
   - notes: render shown was ONE node's single sparse scan (2506 pts) meshed alone ->
     ragged black border is that single scan's mesh boundary, NOT a texture fault.
   - *** CRITICAL FINDING (user caught it): the MULTI-VIEW ASSEMBLY IS BROKEN. *** User
@@ -1065,6 +1088,334 @@ MECHANISM (one cause, every symptom):
    frame -> TF tree connects -> deskew works -> getMovingTransform() succeeds.
    7C changes from "paused/maybe" to "THE concrete unblock for the pan."
 
+### *** CORROBORATING EVIDENCE: same bug, DIFFERENT SLAM system (2026-08-20) ***
+GLIM issue koide3/glim#248 (open, Jul 2025): a user with the SAME hardware — Unitree L2
+on Jetson Orin — reports odometry showing ROTATION/MOVEMENT WHILE STATIONARY. Same
+sensor, same compute platform, DIFFERENT SLAM stack (GLIM, not RTAB, and GLIM is IMU-
+tightly-coupled). Key implications:
+  - A DIFFERENT odometry system hits the SAME failure class on the L2 => the root cause
+    is very likely UPSTREAM of the SLAM choice — in the L2's data feed (SDK/ROS2/IMU/
+    timestamps/frames), NOT in our RTAB launch config. This SUPPORTS the operator's
+    instinct that the bug is in the SDK->ROS2->IMU messaging chain, an accumulated-
+    irregularity area.
+  - The user HAD the IMU configured (GLIM uses it) + set T_lidar_imu, and STILL failed
+    => "just wire in the IMU" may NOT be sufficient. Tempers the earlier "IMU fixes it"
+    confidence. The problem may be deeper (timing/stamping/transform), which is exactly
+    what an audit would surface.
+  - "IMU data alone looks stable" per that user => raw IMU values probably OK; the fault
+    is in how IMU+cloud are combined/timed/transformed.
+  - ISSUE IS OPEN/UNRESOLVED — tells us it's a KNOWN real L2+Jetson problem, not a solved
+    one. We may be genuinely in hard, known-difficult territory with this sensor.
+  MANUFACTURER T_lidar_imu (from the issue, useful artifact — the lidar<->imu transform):
+    T_lidar_imu = [-0.007698, -0.014655, 0.00667,  0, 0, 0, 1]
+    (translation ~mm, ZERO rotation, identity quat). This is the unilidar_lidar<->
+    unilidar_imu static transform — likely what we need to publish; note the SDK may NOT
+    publish it automatically (part of the audit: does the driver emit this TF?).
+
+### *** AUDIT FINDING #1 (2026-08-20): QUATERNION ORDER INCONSISTENCY in the L2 driver ***
+Read the L2 driver IMU/TF publish code (unitree_lidar_ros2.h lines ~170-212). Findings:
+  GOOD: the driver DOES publish imu->lidar TF (imu_frame -> cloud_frame) with the mfr
+    transform (tx0.007698 ty0.014655 tz-0.00667, identity rot). So lidar<->imu ARE linked
+    at the source. AND the IMU message carries a FULL ORIENTATION quaternion
+    (imu.quaternion[...]) -> NO madgwick needed. (Resolves the earlier open question.)
+  *** BUG — quaternion unpacked in TWO DIFFERENT ORDERS from the SAME array: ***
+    IMU MESSAGE (lines 177-180):  orientation = (x,y,z,w) = quaternion[0],[1],[2],[3]
+    TF BROADCAST (lines 196-199): rotation    = (x,y,z,w) = quaternion[1],[2],[3],[0]
+       i.e. TF treats it as (w,x,y,z) with w=quaternion[0].
+    THE SAME imu.quaternion[] IS UNPACKED AS [x,y,z,w] FOR THE MESSAGE BUT [w,x,y,z] FOR
+    THE TF. They cannot both be right — one is WRONG. A swapped quaternion order is a
+    classic driver bug that makes odometry CONFIDENTLY MIS-READ ROTATION — exactly our
+    symptom AND exactly glim#248's cross-SLAM symptom. STRONG root-cause candidate.
+  SECOND ODDITY: the driver publishes the LIVE IMU ORIENTATION AS A DYNAMIC TF
+    (unilidar_imu_initial -> unilidar_imu, updated every msg) + invents an
+    'unilidar_imu_initial' frame nothing else references. A live-orientation TF injected
+    into the tree can FIGHT a SLAM's own orientation estimate and adds an orphan frame.
+  *** RESOLVED (SDK check): the correct order is (x,y,z,w) = quaternion[0,1,2,3]. ***
+    Proven by the SDK's OWN example.h (prints "quaternion (x,y,z,w) = [q0,q1,q2,q3]")
+    AND README.md/README_CN.md (4 places each, all label it "(x, y, z, w)"). So:
+      - IMU MESSAGE unpack (x=q0,y=q1,z=q2,w=q3) = CORRECT. The /unilidar/imu topic is
+        fine — its orientation is right. (So a SLAM reading the TOPIC gets good orientation.)
+      - TF BROADCAST unpack (x=q1,y=q2,z=q3,w=q0) = WRONG (it assumes w-first). The
+        unilidar_imu_initial->unilidar_imu TF is SCRAMBLED — garbage rotation, published
+        every IMU msg. Any pipeline consuming that TF branch gets corrupted orientation.
+        This matches glim#248 (GLIM tightly uses the IMU TF -> scrambled rotation).
+  IMPLICATION: if the IMU MESSAGE order is wrong, ANY SLAM using /unilidar/imu gets
+    scrambled rotation (matches glim#248). If the TF order is wrong, the imu_initial->imu
+    TF is mis-rotated. Either way this inconsistency is a real irregularity in the exact
+    SDK->ROS2->IMU layer the operator suspected. THIS IS THE LEAD.
+
+### TWO DISTINCT PROBLEMS NOW (don't conflate them)
+  PROBLEM A (our RTAB runs so far): we ran lidar3d.launch LiDAR-ONLY, no IMU fed -> empty
+    guess_frame_id -> ICP has no rotation prior -> under-tracks rotation from sparse L2
+    scans. (7J root-cause section.) This is about NOT USING the IMU.
+  PROBLEM B (the driver TF bug, found in audit): the driver's imu_initial->imu TF has a
+    SCRAMBLED quaternion (wrong component order). This corrupts orientation for ANY pipeline
+    that CONSUMES that TF branch (e.g. GLIM/glim#248). It's a LANDMINE for when we DO wire
+    the IMU in.
+  HONEST: Problem B is a PROVEN driver bug but may not be what broke OUR (IMU-less) runs —
+    those are Problem A. The audit's value: we found B BEFORE naively wiring the IMU (which
+    would have hit the scrambled TF and been baffling). Both likely need handling to make a
+    working IMU-aided pan.
+  THE GOOD NEWS: the /unilidar/imu TOPIC orientation is CORRECT (only the driver's TF is
+    wrong). So feeding RTAB the IMU via imu_topic (not via that TF) should give a GOOD
+    rotation prior. When wiring IMU: use the imu_topic, and DO NOT rely on / actively avoid
+    the driver's broken imu_initial->imu TF (or patch the driver's 4 lines to (x,y,z,w)).
+
+### AUDIT CONTEXT: Unitree LiDAR IMU handling is a KNOWN-WEAK AREA (issue survey)
+Surveyed unitreerobotics/unilidar_sdk issues (26 open). Pattern strongly supports the
+"SDK/IMU messaging is irregular" instinct — this is a recurring, under-maintained area:
+  - #34 (Jan 2026, Go2 L1 via unitree_ros2 /utlidar/imu): IMU outputs CORRUPTED values —
+    linear_acceleration ~ -2.9e+28 (garbage), orientation degenerate (x,y,z~1e-33, w~-0.998
+    = essentially (0,0,0,w)). DIFFERENT lidar (L1) + DIFFERENT stack, so NOT proof our L2
+    is corrupted — but shows Unitree LiDAR IMU data can be outright garbage. No Unitree
+    reply. Note user also flags timestamp-sync problems using the robot's main IMU instead.
+  - #21 (Dec 2024): user asks for the imu<->cloud transform because it's UNDOCUMENTED. No
+    answer. (This is the transform we found in the driver with the scrambled-quat TF.)
+  - #27 recalibrate IMU, #33 point/cloud time from packet — all open, IMU/timing themes.
+  TAKEAWAY: our found quaternion-order inconsistency is one instance of a broader pattern
+  of buggy/inconsistent IMU handling across Unitree LiDAR SDKs. Do NOT trust the IMU feed
+  by assumption — VERIFY the live values before building on them.
+
+### *** AUDIT FINDING #2 (2026-08-20): OUR IMU IS HEALTHY — verified live ***
+Ran `ros2 topic echo /unilidar/imu --once` (rig up, held still + level). Values:
+  orientation (x,y,z,w) = (0.7343, -0.0490, -0.6746, -0.0046), norm 0.998 = NORMALIZED,
+    valid quaternion, real components (NOT degenerate like #34's ~1e-33 garbage).
+  linear_acceleration = (9.650, -0.462, 0.612), magnitude 9.68 m/s^2 = GRAVITY. CLEAN.
+    (Contrast #34's ~ -2.9e+28 corruption. We are NOT hit by that bug.)
+  angular_velocity = (0.0002, -0.0113, -0.0110), ~0 at rest = correct.
+  frame_id = unilidar_imu.
+=> OUR /unilidar/imu IS HEALTHY AND USABLE for odometry. The #34 corruption is NOT our
+   problem. The IMU feed is good.
+BONUS AXIS FINDING: gravity is almost entirely on IMU X (9.65 of 9.68) -> the IMU's "up"
+  axis is its X axis, a consequence of the 90deg-mounted L2. Need this when configuring
+  the gravity/fixed frame for IMU-aided odometry (the _stabilized frame alignment).
+
+### PATH TO WIRING THE IMU (now de-risked at the source)
+  1. Feed RTAB the IMU via the TOPIC /unilidar/imu (orientation is CORRECT there) — do
+     NOT use the driver's imu_initial->imu TF (that one has the scrambled quaternion,
+     finding #1). i.e. pass imu_topic:=/unilidar/imu to lidar3d.launch (which then builds
+     the frame_id+"_stabilized" fixed frame -> gives ICP its rotation prior + connects TF).
+  2. Ensure TF unilidar_lidar<->unilidar_imu exists (driver DOES publish imu->cloud with
+     mfr transform; verify it's in the tree via view_frames, or add a clean static TF).
+  3. Mind the gravity-on-X axis when the fixed/stabilized frame is set up.
+  4. Re-test the SAME pan; PASS CRITERION: node-pose yaw spread ~matches the physical pan
+     (vs the ~8x under-count). Watch the map swing live (zoom out first).
+  4b. CANDIDATE MITIGATION for the "TF not available at IMU msg time" error: set
+      always_check_imu_tf:=false (RTAB default is true; confirmed standard param via
+      rtabmap_ros#1298). Our lidar<->imu TF is static, so re-checking it per IMU msg is
+      unnecessary and is what throws the extrapolation error. Worth trying alongside a
+      clean static TF. (NOTE: rtabmap_ros#1298 itself is NOT our case — it's a remote
+      multi-machine D435i camera-VO data-transport failure, not LiDAR+IMU TF. Only the
+      always_check_imu_tf param transfers.)
+  5. If rotation now tracks -> the pan is unblocked. If NOT -> escalate (the driver TF bug,
+     or deeper L2+odometry issue per glim#248 which persisted even with IMU).
+
+### EXTERNAL CORROBORATION (2026-08-20 research) — sharpens the fix
+1. AUTHORITATIVE lidar<->imu TRANSFORM (unilidar_sdk2 README, matches glim#248):
+   T (Lidar -> IMU) = translation (-0.007698, -0.014655, +0.00667), rotation IDENTITY.
+   *** CORRECTS earlier sign note: driver code had (0.007698,0.014655,-0.00667) for the
+   imu->cloud direction; the DOCUMENTED L->I is (-0.007698,-0.014655,+0.00667). Direction
+   & signs matter for a TF. TWO independent sources (SDK README + glim#248) agree on this.
+2. RTAB author (matlabbe) on a similar Oak-D case (forum td10761): odometry/drift error
+   "may be coming from the camera->imu TF frame" -> the RTAB AUTHOR's first suspect for
+   odometry error is the sensor<->imu TF = EXACTLY where we're blocked. Corroborates our
+   diagnosis. His canonical IMU launch uses imu_filter_madgwick (raw /imu -> /imu/data) +
+   wait_imu_to_init:=true. Ours already has orientation so may skip madgwick, but madgwick
+   is the MAINTAINER-BLESSED FALLBACK if direct /unilidar/imu keeps failing. He also notes
+   gravity links null out z-error, and loop-closure-on-return corrects drift (validates the
+   out-and-back pan design).
+3. *** CONFLICT-RISK VALIDATED (ROS Answers q366927, Ouster OS1 + RTAB, hand-held): ***
+   Same split we have — "odom frame has two child frames: baselink and os1sensor_STABILIZED."
+   User tried adding a STATIC TF (baselink<->stabilized) and it "results in the other LIDAR
+   frames not having a transform to odom" i.e. the naive static-TF fix BROKE OTHER FRAMES.
+   => do NOT blindly add a static lidar<->imu TF. LOOK AT THE TREE (view_frames) FIRST, then
+   apply the correct fix. This is direct evidence for the hesitation already flagged.
+   RTAB's own ouster example warns: first cloud may be poorly synced with IMU -> may need an
+   odometry reset on first cloud (resonates with our "TF not available at IMU msg time").
+4. *** L2 IMU IS FACTORY-DISABLED BY DEFAULT (L2 User Manual): *** factory params = "3D Mode,
+   NEGA Mode, IMU Disable, ENET, SELF START, GRAY ON." VERIFY our work_mode actually ENABLES
+   the IMU properly (we DO see /unilidar/imu publishing, so likely enabled, but confirm the
+   mode bits — a mis-set IMU mode could contribute). L2 IMU spec: 1kHz sample / 500Hz report.
+
+### CORROBORATION: "stock RTAB launch under-utilizes the IMU" is a KNOWN pattern
+luxonis/depthai#1147 (title: "Imu has not been utilized in rtabmap.launch.py", labeled
+BUG): an OAK-camera user found the stock RTAB launch WASN'T actually using the IMU, wired
+it in properly, and reported "such an improvement in speed of odometry calculation and
+stability." Independent confirmation of OUR root-cause category (RTAB not using IMU -> poor
+odometry; wiring it in -> better). His canonical pipeline (matches the RTAB-author forum
+thread — now THREE sources agree):
+    imu_filter_madgwick_node: use_mag=False, world_frame='enu', publish_tf=False,
+      remap imu/data_raw -> <raw imu>,  /imu/data -> /rtabmap/imu
+    rtabmap/odometry: wait_imu_to_init=True, imu remapped to /rtabmap/imu
+CAVEATS (does NOT fully map to us): (1) it's a CAMERA (RGBDOdometry), not LiDAR icp_odometry;
+(2) his OAK IMU is data_raw ONLY (no orientation) so he NEEDED madgwick — OURS already has
+orientation, so this does NOT prove we need it; (3) he didn't hit our lidar<->imu TF blocker
+(camera imu<->cam TF is published cleanly; ours is the flaky Unitree driver TF).
+NEW IDEA (speculative, cheap to try): run madgwick ANYWAY even though our IMU has
+orientation — madgwick republishes a CLEAN /rtabmap/imu at steady rate, which MIGHT sidestep
+our "TF not available at IMU msg time" timing error as a side effect. Worth trying if the
+direct route + always_check_imu_tf:=false doesn't work. Not a substitute for fixing the TF.
+
+### *** KEY LEAD: L2 TIME BASE runs at ~1/2 real rate (unilidar_sdk2#25) ***
+markgol (Jan 2026, HW 2.2.1.1 / FW 2.8.11.1) measured L2 packet timestamps vs host system
+time: the L2's internal TIME BASE runs at ~1/2 ACTUAL TIME RATE. Confirmed with IMU packets,
+3D packets, and both; 0 lost packets. OPEN, no Unitree reply.
+WHY THIS MATTERS TO US (directly on-target): our IMU-integration failure was a TIMING error —
+"TF not available at IMU msg time" + "Lookup would require extrapolation into the future
+(requested ...482 but latest data ...471, ~10s gap)". A half-rate sensor clock makes L2-
+stamped times DIVERGE from host/ROS time -> exactly the class of mismatch that throws
+extrapolation/TF-timing errors and freezes the stabilized frame.
+HONEST TENSION (do not overclaim): our driver runs use_system_timestamp:True, which stamps
+the CLOUD with HOST time and SHOULD sidestep the L2 clock. BUT the failure was in the IMU->TF/
+stabilized-frame path, which mixes IMU + cloud + stabilized-frame stamps; if any of those
+carries L2-half-rate time while others carry host time, they diverge as observed. So #25 is a
+STRONG CANDIDATE CONTRIBUTOR to our IMU-path failure, NOT yet confirmed as our cause.
+=> MEASURABLE ON OUR RIG (concrete diagnostic, cheap): compare timestamps to host wall-clock:
+   - `ros2 topic echo /unilidar/imu --field header.stamp` a few times + note wall clock; see
+     if stamp advances at real rate or half.
+   - same for /unilidar/cloud header.stamp.
+   - compare /unilidar/imu stamp vs /unilidar/cloud stamp at the same instant — do they agree?
+   - check our FW version (vs #25's 2.8.11.1) — the bug may be firmware-specific.
+   If our unit shows half-rate on the IMU path, THAT is likely why imu_to_tf/deskew froze, and
+   the fix shifts (force host-stamping on the IMU path, or a firmware update, not just a static TF).
+   This is the best-targeted lead in the whole survey — same SDK, same hardware, same timing domain.
+
+### STEP-1 (firmware/version check) — partial result (2026-08-20)
+- SDK library version = 2.0.9 (unitree_lidar_sdk_config.h, compile-time constant). This is
+  the SDK version, NOT the firmware (#25's half-rate unit was FIRMWARE 2.8.11.1).
+- FIRMWARE + HARDWARE version are RUNTIME queries: getVersionOfLidarFirmware() /
+  getVersionOfLidarHardware() (see unitree_lidar_sdk.h + example.h which prints
+  "lidar firmware version = ..."). So it CAN'T be read purely cold — needs the rig; the
+  driver likely prints it at startup (capture deliberately next rig-up).
+- *** SHARPENS the #25 question: authoritative SDK doc (unitree_lidar_utilities.h L123/229):
+  use_system_timestamp=true -> HOST system timestamp; false -> LIDAR HARDWARE timestamp
+  (the half-rate clock). Our config = True. So per the SDK, our stamps SHOULD be host-time,
+  which would mean #25's half-rate hardware clock does NOT reach our timestamps -> #25 may
+  NOT be our cause. OPEN QUESTION to settle on the rig: does use_system_timestamp cover the
+  IMU publish path too, or only the cloud? If IMU path is host-stamped as well, #25 is likely
+  a red herring for us and our TF-timing failure has a different root (the driver's in-callback
+  TF publishing). If the IMU path is NOT host-stamped, divergence could still bite. ***
+  NEXT-RIG CHECK (settles it): echo header.stamp of BOTH /unilidar/imu and /unilidar/cloud,
+  compare to host wall-clock rate; if both advance at real-time, use_system_timestamp is fully
+  applied and #25 is not our problem.
+
+### *** RESOLVED (2026-08-20, via sources): the "half rate" + "message loss" are NOT defects ***
+UPDATE that supersedes the alarm below. Two source-based findings (NO code written):
+  1. 250 Hz is the INTENDED SLAM rate, not half-broken. Unitree's OWN point_lio_unilidar
+     config sets imu_time_inte:0.004 = 250 Hz, and L1+L2 use IDENTICAL config (DeepWiki:
+     deepwiki.com/unitreerobotics/point_lio_unilidar). The L1 product spec: IMU "250 Hz output
+     FOR STABLE SLAM". The 500 Hz in the L2 manual is the chip's raw reporting ceiling; the
+     SLAM-facing rate the manufacturer ships/configures is 250 Hz. Our ~250 Hz = correct.
+  2. "A message was lost!!!" from `ros2 topic echo` is a DIAGNOSTIC-TOOL ARTIFACT, not a data-
+     path loss. Sensor topics are BEST_EFFORT QoS; echo/mismatched readers report losses a
+     properly-QoS'd SLAM subscriber does NOT get. Corroborated: Husarion Panther (echo drops
+     but direct SSH reads clean), TurtleBot4 #152, academic ros2probe study (observer loses a
+     DIFFERENT set than the subscriber). The drops we saw = the OBSERVER, not the sensor.
+CONFIDENCE: strong documentary (Unitree's own config + multiple independent sources); NOT yet
+  rig-measured that a sensor-QoS subscriber gets a clean stream. Documentary, not rig-proven.
+IMPLICATION: our RTAB failure was NOT bad IMU data - it was RTAB TF-PLUMBING (the _stabilized
+  frame / flaky in-callback driver TF / deskew timing). The IMU feed is fine. Point-LIO expects
+  250 Hz (its config sets it) so it would ingest our IMU fine. The IMU was never the blocker.
+--- (original half-rate alarm, kept for the record; now understood as normal) ---
+
+### *** MEASURED ON OUR RIG (2026-08-20): IMU ARRIVES AT HALF SPEC RATE ***
+ros2 topic hz results (rig up, steady):
+  /unilidar/imu   = ~250 Hz  (L2 manual spec = 500 Hz report rate) -> EXACTLY HALF.
+  /unilidar/cloud = ~12 Hz    (steady; this is the rate EVERY working capture used - normal
+                               functional cloud rate for us).
+=> The IMU is arriving at HALF its documented 500 Hz. Consistent with unilidar_sdk2#25's
+   "L2 time base is half real rate" finding, now observed on OUR unit on the IMU path.
+   The cloud at 12 Hz appears functionally normal (all working captures used it), so this may
+   be IMU-path-specific rather than a uniform whole-clock halving - but we do NOT have a solid
+   "cloud should be X Hz" reference to be sure. NOT over-claiming which.
+NOT YET DISTINGUISHED (the stamp-vs-wallclock test was attempted but the procedure was botched
+   by the assistant bundling steps; deferred): whether the ~250 Hz is a half-rate CLOCK (stamp
+   values advance at half real-time, the #25 claim) vs half-rate DELIVERY (msgs arrive at 250 Hz
+   but stamps are correct). use_system_timestamp:True should give correct stamp VALUES either
+   way, but half the SAMPLE COUNT reaches imu_to_tf regardless -> plausibly contributes to the
+   stabilized-frame/deskew timing failure ("TF not available at IMU msg time").
+   To distinguish later (ONE command, clean): 
+     ros2 topic echo /unilidar/imu --field header.stamp --once   (note sec.nsec)
+     ...wait a known interval, run again, compare stamp delta to real elapsed. Half = clock bug.
+STAMP-VALUE RESULT (2026-08-20): two /unilidar/imu header.stamp reads were
+  1787244461.171 and 1787244527.550 - BOTH are correct current UNIX epoch times (decode to
+  real present-day wall-clock). A half-rate HARDWARE clock could NOT produce a correct current
+  epoch. => use_system_timestamp:True IS stamping with real HOST time; the stamp VALUES are
+  fine. So #25's half-rate CLOCK is NOT corrupting our timestamps. (The intended wait-vs-delta
+  ratio test was abandoned - assistant failed to tell the operator to time the wait beforehand;
+  but the epoch-correctness check answers it without timing.)
+  *** CONCLUSION: our problem is NOT timestamp VALUES. It's IMU DELIVERY: ~250 Hz (half of
+  500 spec) AND ACTIVE MESSAGE LOSS - `ros2 topic echo /unilidar/imu` reported "A message was
+  lost!!!" 8x before one got through. Half throughput + drops on the IMU path -> fewer IMU
+  samples reach imu_to_tf -> plausible contributor to the stabilized-frame/deskew timing
+  failure. The fix direction shifts to DELIVERY/QoS + TF-STRUCTURE, NOT timestamp correction. ***
+  NEW SIGNAL TO INVESTIGATE: IMU message loss (QoS/transport). Could be QoS-profile mismatch,
+  Ethernet/UDP packet loss, or the driver. Check QoS on /unilidar/imu; the L2 is ENET/UDP.
+FIRMWARE VERSION: still not captured (runtime query; grab at next driver startup).
+
+Surveyed: glim#248 (L2 same symptom, cross-SLAM - KEY), RTAB-author forum td10761 (sensor<->
+imu TF is the culprit + madgwick pattern - KEY), ROS-Answers q366927 (Ouster: naive static TF
+breaks frames - KEY caution), L2 SDK/manual (authoritative transform + IMU-disabled-default -
+KEY), depthai#1147 (stock RTAB under-uses IMU - corroboration). MISSES (different problems,
+recorded as non-matches): rtabmap_ros#1298 (remote camera transport), #1174 (wheel+VO fusion).
+=> The useful sources converge. EXCEPTION: unilidar_sdk2's OWN issue tracker is on-target
+(same hardware). Besides #25 (time base), worth a look if needed: #27 (duplicated walls / Z
+oscillation during mapping = odometry failure signature), #24 (SLAM unstable at ~45deg mount
+angle - we're at 90deg), #16 ("Do not have TF data"), #20 (point cloud data structure/time
+fields). The unblocking action remains the view_frames TF capture + the #25 timestamp
+measurement on the rig, both cheap.
+
+### REMAINING AUDIT STEPS (optional / as needed)
+  0. [NEW, do FIRST, cheap] VERIFY LIVE /unilidar/imu VALUES (rig up, one command):
+       ros2 topic echo /unilidar/imu --once
+     Check, holding the rig STILL and roughly level:
+       - orientation: a normalized quaternion (norm~1), NOT degenerate like #34's
+         (x,y,z ~ 0 with only w) — for a level sensor expect w near +/-1, small x,y,z.
+       - linear_acceleration: SANE, ~9.8 m/s^2 total magnitude (gravity), NOT 1e+24+
+         garbage like #34. If accel is garbage -> IMU-aided odometry can't work until fixed
+         (firmware/SDK update), regardless of the quaternion-order fix.
+       - angular_velocity: ~0 when still.
+     This one echo tells us if our IMU is USABLE at all. Do it before any IMU integration.
+
+Before wiring/building more, AUDIT the SDK->ROS2->IMU/cloud chain — verify each link
+carries what we've assumed, don't build on unverified foundations. Specific checks:
+  1. Does the SDK PUBLISH the unilidar_lidar<->unilidar_imu TF? (if not -> that missing
+     transform could BE the split TF tree). Manufacturer value above if we must add it.
+  2. /unilidar/imu message contents: orientation quaternion present, or raw gyro+accel
+     only? (ros2 topic echo /unilidar/imu --once, or read driver source). Decides madgwick.
+  3. Are /unilidar/cloud and /unilidar/imu timestamps consistent + sane? (use_system_
+     timestamp:True on both — verify they actually agree).
+  4. Is the per-point 'time' field in the cloud correct (deskew needs it)?
+  5. Check the L2 IMU sign/axis conventions vs ROS REP-103 (a flipped axis would make
+     odometry mis-read rotation — a classic "messaging irregularity").
+  Given glim#248, keep expectations honest: this may be a known-hard L2 issue; the audit
+  is to LOCATE the irregularity, which could be timing, TF, or axis convention.
+
+### CONFIRMED IMU FACTS (from the unilidar SDK launch file, in the record)
+From ~/ros2_ws/src/unilidar_sdk2/unitree_lidar_ros2/.../launch/launch.py (seen in the
+2026-08-17 tau transcript):
+  - IMU topic:  /unilidar/imu   (published by the SAME driver — already live when rig up)
+  - IMU frame:  unilidar_imu
+  - cloud frame: unilidar_lidar ; cloud topic: unilidar/cloud
+  - use_system_timestamp: True (cloud + imu stamped with host time)
+So the IMU is ALREADY BEING PUBLISHED whenever the rig runs — we just never fed it to
+lidar3d.launch. Good: less to set up than feared.
+
+### OPEN QUESTION TO RESOLVE COLD (before wiring IMU) — SDK not yet checked for this
+We have NOT looked in the unilidar SDK for the IMU MESSAGE CONTENTS or example code.
+The decisive unknown: does /unilidar/imu publish a full ORIENTATION quaternion, or only
+raw angular-velocity + linear-acceleration?
+  - if ORIENTATION present -> can feed RTAB/fixed-frame more directly.
+  - if RAW only -> must run imu_filter_madgwick (use_mag:=false, publish_tf:=false) to
+    COMPUTE orientation first (the lidar3d.launch header explicitly expects this).
+CHECK (cold, on Jetson, no rig): the driver source at
+  ~/ros2_ws/src/unilidar_sdk2/unitree_lidar_ros2/src/... (the .h/.cpp that builds+publishes
+  the sensor_msgs/Imu) — does it set orientation, or leave it 0 with only angular_velocity
+  + linear_acceleration? Also check for an IMU README/example in the SDK.
+  QUICK RUNTIME CHECK (rig up, cheap): ros2 topic echo /unilidar/imu --once  -> look at the
+  'orientation' field: nonzero/normalized quaternion = has orientation; all-zero (w=0 or
+  x=y=z=w=0) = raw only -> need madgwick.
+
 ### NEXT SESSION — RESUME 7C IMU INTEGRATION (now the critical path)
   Per the launch header (L9-12): needs TF between lidar/base and imu frame, and an IMU
   orientation via imu_filter_madgwick (use_mag:=false publish_tf:=false). Steps:
@@ -1086,6 +1437,68 @@ MECHANISM (one cause, every symptom):
     rotation-while-tracking) OR after the TF/deskew fix.
   - The photoreal SINGLE-VIEW result (outputs/sampleB_render.png) still stands as proof
     the texturing pipeline endpoint works; it's the multi-view POSE assembly that's blocked.
+
+═══════════════════════════════════════════════════════════════════════════
+## 7K. ⚠️ STRATEGIC STATUS (2026-08-20) — RTAB rotation is the ceiling; Point-LIO is the fix ⚠️
+═══════════════════════════════════════════════════════════════════════════
+COLD-READER SUMMARY OF WHERE THIS PROJECT ACTUALLY STANDS (honest, evidence-based):
+
+THE CORE PROBLEM, PROVEN VISUALLY:
+- The sampleB "photoreal success" is NOT a clean reference. It was a ~270 deg pan that hit
+  the rotation-under-tracking bug: poses recorded only 14.5 deg yaw for a ~270 deg physical
+  sweep (~18x under-count), translations 16-38cm. Assembled world extent = x3.3 y9.5 z13.0m
+  -> a room is NOT 13m tall; that's rotation-collapsed geometry (scans from different walls
+  placed at wrong orientations). See mesh_shape_views.png (3 ortho views) + best_render.png
+  (94% cov single view). The textured patches are photoreal, but the FULL-ROOM reconstruction
+  is corrupted. "Missing half the room" = the rotation bug made visible, NOT a coverage/view
+  limitation. *** CORRECTION: earlier Master text calling sampleB a "clean stationary
+  reference / PHOTOREAL SUCCESS" was WRONG - it's rotation-corrupted. ***
+
+BENCHMARK REALITY CHECK (operator, 2026-08-20):
+- Current output is "Polycam with superior equipment" - only moderately better than the free
+  iPhone app, which was used as the WORST-CASE baseline to beat. The rig has NOT yet beaten
+  Polycam. The premise (superior LiDAR -> superior image) is real in the SENSOR but is being
+  thrown away by the rotation bug degrading survey-grade scans back to phone-grade geometry.
+- UNRESOLVED HONEST QUESTION: is the rig's justification (a) better geometry [blocked by
+  rotation bug], or (b) RELIGHTING [day->night, Unreal light placement] which Polycam CANNOT
+  do? If (b), the goal should shift to proving relighting on adequate geometry, not to a
+  prettier mesh. Not yet decided.
+
+CAN THE ROTATION BUG BE FIXED? - most honest answer:
+- On RTAB: NO PROVEN FIX. Only untested candidates (always_check_imu_tf:=false, clean static
+  TF, madgwick). Every RTAB IMU attempt has been blocked UPSTREAM of testing rotation. RTAB's
+  LiDAR-inertial path is a fragile bolt-on and a poor fit for this sparse spinning sensor.
+- On the L2 in general: YES, DEMONSTRABLY - but via POINT-LIO, not RTAB. Unitree ships
+  official L2 Point-LIO demos (videos + downloadable L2 indoor/park bags) at
+  github.com/unitreerobotics/point_lio_unilidar showing clean L2 rotation-tracked maps. So
+  the rotation problem is NOT a hardware limit; it is an RTAB-specific failure. The IMU feed
+  itself is fine (250Hz is the intended SLAM rate; "message lost" was a topic-echo artifact).
+- => "Solvable on the L2, demonstrated by the manufacturer; NOT yet solved by US." The fix is
+  a PIVOT to Point-LIO for odometry, not more RTAB debugging.
+
+POINT-LIO PIVOT - what it costs and what survives (from earlier analysis):
+- SURVIVES a pivot (engine-independent): raw clouds, raw IMU, camera images, calibration
+  (reformat extrinsic to "lidar-in-IMU-frame", don't re-measure), the texturing ENGINE
+  (per_shot_texture.py takes posed images+mesh, source-agnostic).
+- NEEDS REWORK: the db_to_texture bridge (Point-LIO outputs .pcd + odometry, NOT an RTAB .db)
+  -> re-plumb to consume Point-LIO poses/cloud + separately-logged posed images.
+- WATCH-OUTS: official Unitree repo is ROS1 noetic / Ubuntu 20.04 - WRONG for our ROS2 Humble
+  rig. The ROS2 port is dfloreaa/point_lio_ros2 (has explicit L2 support). Build friction on
+  Jetson (PCL/Eigen/livox_ros_driver2) likely. IMU config needs satu_acc/satu_gyro/acc_norm
+  + extrinsic in Point-LIO's convention. imu_time_inte:0.004 (=250Hz) matches our IMU.
+- ZERO-RIG PROOF AVAILABLE: Unitree's L2 indoor bag can be run through Point-LIO to confirm
+  clean rotation BEFORE any Jetson build. (Operator has already seen the demos.)
+
+THE DECISION IN FRONT OF THE OPERATOR (not yet made):
+  (A) Pivot odometry to Point-LIO ROS2 - the demonstrated fix for rotation, but a real
+      re-build + texturing re-plumb.
+  (B) Keep fighting RTAB IMU - unproven, fragile, poor-fit; low confidence.
+  (C) Use Polycam for scouting-grade geometry NOW; reserve the custom rig as an R&D track for
+      the RELIGHTING endgame (the thing Polycam can't do), which is the rig's real
+      differentiator if geometry-parity with Polycam is the current ceiling.
+  Recommendation leaned: if moving-capture is required, (A) is the demonstrated path; but FIRST
+  settle whether the rig's value is geometry or relighting, because that decides if the pivot
+  is even worth it.
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 8. SESSION UPDATE LOG (append one line per session; values above stay current)
