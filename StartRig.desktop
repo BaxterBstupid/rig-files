@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Start Rig
+Exec=gnome-terminal -- bash -c "/home/fasterbybaxter/rig_start.sh"
+Icon=utilities-terminal
+Terminal=false
