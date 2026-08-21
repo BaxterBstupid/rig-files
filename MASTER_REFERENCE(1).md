@@ -1,4 +1,4 @@
-[MASTER_REFERENCE(6).md](https://github.com/user-attachments/files/31274633/MASTER_REFERENCE.6.md)
+[MASTER_REFERENCE(7).md](https://github.com/user-attachments/files/31285455/MASTER_REFERENCE.7.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
 Last updated: 2026-08-17 (session: framework + RTAB scoping)
@@ -63,14 +63,11 @@ is the mesh/delighting/render pipeline in 7F. Colour Way A fix (7D) remains avai
 no longer the priority. Camera upgrade (to a hardware-triggered model that kills tau) is planned —
 see 7B for the if/then branch.
 
->>> NEXT SESSION STARTS HERE: Item 2 — COLD-PREP CAMERA COLOUR integration.
-   Cold research (no rig): how rtabmap_sync's `rgbd_sync` node fuses the mono B0578
-   image (/image_raw) + LiDAR cloud into a coloured RGBD input for RTAB-Map; the exact
-   additions to lidar3d.launch.py (the `rgbd_image_topic` arg feeds rtabmap; needs
-   camera_info with the vetted intrinsics + the extrinsic TF camera↔lidar); then a
-   prepped one-shot bench attempt. Goal: COLOURED maps (currently geometry-only).
-   Note: colour-on-motion is limited by unsolved tau (fine for slow captures; trigger
-   camera fixes it later, see 7B). See also section 7B step 3.
+>>> NEXT SESSION STARTS HERE: **PIVOT TO POINT-LIO** (decided 2026-08-20).
+   The RTAB rotation bug is not fixed and won't be; the fix is Point-LIO (Unitree
+   demonstrates clean L2 rotation-tracked maps). See 7K for full rationale + 7L for the
+   step plan. Do the COLD-PREP items in 7L first (build plan, config values, extrinsic
+   reformat) BEFORE any rig-on. One step at a time, proven before moving.
 
 HOW TO READ THIS DOC: sections 1-6 are lookup tables (hardware, calibration values, nodes,
 files, data, gotchas). Section 7 = stage dashboard. 7B = camera-branch plan. 7C = IMU
@@ -1499,6 +1496,173 @@ THE DECISION IN FRONT OF THE OPERATOR (not yet made):
   Recommendation leaned: if moving-capture is required, (A) is the demonstrated path; but FIRST
   settle whether the rig's value is geometry or relighting, because that decides if the pivot
   is even worth it.
+
+═══════════════════════════════════════════════════════════════════════════
+## 7L-HW. JETSON = ORIN NANO 8GB — most "Jetson Nano" guidance is WRONG for us
+═══════════════════════════════════════════════════════════════════════════
+CONFIRMED (operator, 2026-08-20): the board is 8GB = Jetson ORIN Nano (2023, Ampere), NOT the
+original Jetson Nano (2019, 4GB, Maxwell). These are very different machines. Much online
+"Jetson Nano" Point-LIO/SLAM guidance targets the OLD 4GB board and is WRONG for us.
+
+DISCARD (wrong for Orin):
+  - "Use Ubuntu 18.04/20.04 + ROS Melodic/Noetic" -> WRONG. We are correctly on Ubuntu 22.04 +
+    ROS2 Humble (right for Orin's JetPack). Do NOT downgrade OS/ROS on old-Nano advice.
+  - OOM-panic framing (maps trigger crashes, need 8GB MicroSD swap) = 4GB-survival advice.
+    With 8GB + Ampere we have real headroom. Not one map from a crash.
+KEEP (good on any Jetson):
+  - Max performance: `sudo nvpmodel -m 0` + `sudo jetson_clocks` before a run (Point-LIO is
+    CPU-bound point-by-point; worth doing on Orin too).
+  - Don't run RViz on the Jetson - run it on a HOST over the ROS network. Keeps the capture
+    device lean.
+  - Map-size/downsample config discipline: the L2 config already sets filter_size_surf/map:0.4,
+    blind:0.5 - understand these keep the incremental map manageable (not crash-avoidance for
+    us, just good practice).
+
+COMPUTE RISK = CLEARED. Operator ran Point-LIO/L1 -> CLEAN map on a 2017 generic x86 tower.
+  If a 2017 tower did it, the Orin Nano (8GB, far stronger than old Nano) runs it comfortably.
+  Point-LIO is lightweight. Compute + RAM are OFF the worry list.
+
+CLEAN ARCHITECTURE this hardware enables (methodological lock-in):
+  - JETSON runs Point-LIO HEADLESS (lean, no viz).
+  - The x86 TOWER (already owns a proven Point-LIO run) runs RViz / visualization over the ROS
+    network, and is the FALLBACK odometry machine if the Jetson aarch64 build fights us.
+  So we are NOT forced to solve the Jetson build to make progress - the tower is a proven
+  Point-LIO host. That de-risks the pivot's biggest remaining item.
+
+REMAINING REAL RISK (unchanged by 8GB):
+  - aarch64/ROS2 BUILD friction (compiling PCL/Eigen/livox_ros_driver2 on ARM) - the real
+    time-sink, but with the x86 tower as fallback.
+  - Point-LIO output -> texturing/relight BRIDGE (the genuinely new work; RTAB was the old input).
+METHOD NOTE: when build issues hit, use ORIN Nano + JetPack 5/6 + Humble sources - NOT generic
+  "Jetson Nano" tutorials (they point at old OS/ROS and will mislead).
+
+## 7L-DATA. L1 DATASET INSPECTED (2026-08-20) — validates the data format for Point-LIO
+═══════════════════════════════════════════════════════════════════════════
+Operator provided a real Unitree L1 rosbag (unilidar-2023-09-22, 322MB, ROS1 .bag, 435.7s).
+Parsed cold with pure-python `rosbags` lib (no ROS install). VERIFIED (measured, not assumed):
+  TOPICS/RATES: /unilidar/imu 249.7 Hz (108813 msgs), /unilidar/cloud 9.9 Hz (4312 msgs).
+    -> confirms 250Hz IMU is the L-series NORM (3rd confirmation), cloud ~10Hz.
+  CLOUD FIELDS: x,y,z(f32) intensity(f32,off16) ring(u16,off20) TIME(f32,off24), point_step 32.
+    *** PER-POINT `time` FIELD PRESENT and VARIES 0->0.0968s within each scan. *** This is THE
+    critical Point-LIO requirement (README note C: "Failed to find match for field 'time'" =
+    common blocker). Unitree format HAS it. timestamp in SECONDS -> matches config
+    timestamp_unit:0. This is the field that makes Point-LIO deskew work (and that RTAB's path
+    fought). Confirmed present in Unitree data.
+  FRAME IDS: cloud=unilidar_lidar, imu=unilidar_imu -> EXACTLY our rig's frames.
+  IMU HEALTH: orientation norm 0.998, accel mag 9.715 (gravity). Same healthy signature as our L2.
+  MATCHES the L2 Point-LIO config we captured (lidar_type:5, scan_line:18, timestamp_unit:0,
+    x/y/z/intensity/ring/time layout).
+HONEST LIMITS: this is L1 (not L2) + ROS1 bag (not ROS2). Format is ~identical (our own L2 field
+  inspection also showed x/y/z/intensity/ring/time), so it validates the ALGORITHM+FORMAT path,
+  not L2 specifically. Does NOT prove Point-LIO tracks OUR rotation - only that the data format
+  is correct. Actual rotation test still needs a run.
+USE: this bag can serve as the BENCH-VALIDATION input - run it through Point-LIO on a capable
+  machine to confirm a clean map before the Jetson build (validates algorithm+format; L1 not L2).
+  (Cannot run in Claude's sandbox - no ROS/build. Operator-run.)
+
+## 7L-CONFIG. POINT-LIO L2 CONFIG — FULL VALUES (from Unitree's config/unilidar_l2.yaml)
+═══════════════════════════════════════════════════════════════════════════
+*** BIG UNLOCK: the ENTIRE L2 config is published by Unitree. We COPY it, not derive it. ***
+Source: deepwiki.com/unitreerobotics/point_lio_unilidar/4.2-unitree-l2-configuration
+(= config/unilidar_l2.yaml + launch/mapping_unilidar_l2.launch in the ROS1 official repo).
+The ROS2 port (dfloreaa) is a port of exactly this - values should carry over (verify the
+ROS2 repo's config/ has the L2 yaml; if not, create it from these values).
+
+COMMON:
+  lid_topic: /unilidar/cloud        <- MATCHES our rig exactly
+  imu_topic: /unilidar/imu          <- MATCHES our rig exactly
+  con_frame: false ; con_frame_num: 1 ; cut_frame: false ; cut_frame_time_interval: 0.1
+  time_lag_imu_to_lidar: 0.0
+PREPROCESS:
+  lidar_type: 5 (UNILIDAR) ; scan_line: 18 ; timestamp_unit: 0 (seconds) ; blind: 0.5
+MAPPING - IMU (the values the README warned we'd have to find - ALL PROVIDED for L2):
+  imu_en: true ; imu_time_inte: 0.004 (=250Hz, matches our measured IMU rate)
+  satu_acc: 30.0 ; satu_gyro: 35 ; acc_norm: 9.81
+MAPPING - covariances:
+  lidar_meas_cov: 0.01 ; imu_meas_acc_cov: 0.1 ; imu_meas_omg_cov: 0.1
+  acc_cov_input: 0.1 ; gyr_cov_input: 0.01
+MAPPING - EXTRINSIC (IMU->LiDAR, IMU is base frame):
+  extrinsic_T: [0.007698, 0.014655, -0.00667]   *** authoritative: positive-first signs ***
+  extrinsic_R: [1,0,0,0,1,0,0,0,1]  (identity - no rotation between IMU & LiDAR frames)
+  *** CORRECTION to earlier Master note: I had written the LiDAR->IMU direction
+  (-0.007698,-0.014655,+0.00667). Point-LIO wants IMU->LiDAR = [0.007698,0.014655,-0.00667].
+  Same physical offset, opposite direction. USE THE POSITIVE-FIRST FORM for Point-LIO. ***
+OUTPUT:
+  publish_odometry_without_downsample: enable ; path_en: true ; scan_publish_en: true
+  pcd_save_en: true ; interval: -1 (all frames -> one PCD)
+LAUNCH runtime params:
+  filter_size_surf: 0.4 ; filter_size_map: 0.4 (L2's enhanced 0.4m downsample)
+  point_filter_num: 1 ; cube_side_length: 1000 ; use_imu_as_input: 0 ; space_down_sample: 1
+
+KEY IMPLICATIONS (honest):
+  - IMU tuning is NOT the risk I flagged: satu_acc/satu_gyro/acc_norm are all published for L2.
+  - Point-LIO uses the SENSOR-INTERNAL IMU<->LiDAR extrinsic (above), which is INDEPENDENT of
+    OUR camera calibration. So we do NOT reformat our camera extrinsic for Point-LIO. The
+    camera only re-enters at the TEXTURING stage (per_shot_texture), not in odometry.
+  - Topics already match (/unilidar/cloud, /unilidar/imu) - no remapping needed.
+  - CAVEAT: values sourced from the ROS1 official L2 config; the ROS2 port SHOULD match (same
+    sensor, direct port) but VERIFY the ROS2 repo ships config/unilidar_l2.yaml; if missing,
+    create it from these exact values + adapt the launch to ROS2 .launch.py form.
+
+═══════════════════════════════════════════════════════════════════════════
+## 7L. POINT-LIO PIVOT — STEP PLAN (decided 2026-08-20, next session)
+═══════════════════════════════════════════════════════════════════════════
+DECISION: pivot odometry from RTAB to Point-LIO. Rationale in 7K (RTAB rotation unfixable in
+practice; Point-LIO is the manufacturer-demonstrated fix for L2 rotation tracking).
+
+WHICH REPO (critical - do NOT use the wrong one):
+- Unitree's OFFICIAL repo github.com/unitreerobotics/point_lio_unilidar is ROS1 NOETIC /
+  Ubuntu 20.04 -> WRONG for our ROS2 Humble / Ubuntu 22.04 Jetson. Use it only as reference
+  (config values, L2 datasets, demo proof).
+- USE THE ROS2 PORT: github.com/dfloreaa/point_lio_ros2 (explicit Unitree L1/L2 support,
+  ROS2 Humble, Ubuntu 22.04 tested). This is the one to build on the Jetson.
+
+COLD-PREP FIRST (no rig, do before any hot window):
+  1. Read dfloreaa/point_lio_ros2 README + config fully. Identify the L2 config file and its
+     params: lid_topic, imu_topic, extrinsic_T, extrinsic_R, satu_acc, satu_gyro, acc_norm,
+     scan_line (=18 for L2), lidar_type (=5 UNILIDAR), timestamp handling, imu_time_inte
+     (=0.004 = 250Hz, matches our IMU).
+  2. Confirm build deps vs our Jetson: PCL, Eigen, livox_ros_driver2 (Point-LIO needs it
+     sourced even for non-Livox), ros-humble-pcl-ros/pcl-conversions. Flag likely Jetson
+     build friction (PCL/Eigen versions) BEFORE building.
+  3. Reformat OUR extrinsic to Point-LIO's convention: it wants LiDAR pose IN IMU frame
+     (extrinsic_T, extrinsic_R = lidar-in-imu). Our calibration is lidar<->cam and the
+     lidar<->imu is the mfr value t=(-0.007698,-0.014655,+0.00667), R=identity. Work out the
+     exact numbers to paste into the yaml. (Do NOT re-measure; transform what we have.)
+  4. Obtain IMU saturation/norm values for the L2 IMU (satu_acc, satu_gyro, acc_norm) - from
+     Unitree's official config (point_lio_unilidar/config) as the reference starting point.
+
+ZERO-RIG VALIDATION (optional but smart, before committing Jetson build time):
+  - Download Unitree's L2 indoor bag (oss-global-cdn.unitree.com/static/L2 Indoor Point Cloud
+    Data.bag) and run it through Point-LIO on ANY capable machine -> confirm clean rotation-
+    tracked map. (Operator has already seen Unitree's demos, so this may be skippable.)
+
+BUILD + FIRST RUN (rig, cold-prepped):
+  5. Build point_lio_ros2 + unilidar_sdk2 on the Jetson (colcon). Expect iteration.
+  6. First run: keep LiDAR STATIONARY the first few seconds (Point-LIO IMU init requirement),
+     then do the SAME ~270 pan that broke RTAB. PASS CRITERION: the saved map (PCD/scans.pcd
+     or the ROS2 equiv) is a COHERENT room - walls at right angles, ~2.5-3m tall (NOT 13m),
+     full room present (not half). Compare directly against the RTAB rotation-collapsed result.
+  7. If PASS -> rotation is solved; move to re-plumbing texturing (step 8). If FAIL -> capture
+     the exact errors; do not thrash.
+
+TEXTURING RE-PLUMB (after odometry works):
+  8. Point-LIO outputs a point cloud map (.pcd) + odometry poses, NOT an RTAB .db. The
+     texturing ENGINE (per_shot_texture.py: mesh + best_image_per_face) is source-agnostic and
+     SURVIVES. What needs rework is the BRIDGE: replace db_to_texture.py's RTAB-.db reader with
+     one that consumes (a) Point-LIO's cloud/poses and (b) the camera images + their poses
+     (logged separately, timestamp-matched to Point-LIO odometry). Keep per_shot_texture.py.
+  9. Camera images: Point-LIO won't store them like RTAB did. Need a capture that logs
+     /image_raw WITH a timestamp that can be matched to Point-LIO's pose stream (interpolate
+     pose at image time). This is the main new plumbing.
+
+WHAT SURVIVES THE PIVOT (do not redo): calibration (intrinsics+extrinsic, reformatted),
+raw clouds, raw IMU, camera images, per_shot_texture.py texturing engine, the whole VFX/
+relight endpoint plan (7E/7F). WHAT'S REPLACED: RTAB -> Point-LIO (odometry+map), and the
+db_to_texture bridge -> a Point-LIO-output bridge.
+
+OPEN STRATEGIC FLAG (from 7K, still unresolved): confirm whether the rig's real justification
+is GEOMETRY or RELIGHTING. If relighting, prioritize proving that path once geometry is clean.
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 8. SESSION UPDATE LOG (append one line per session; values above stay current)
