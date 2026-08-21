@@ -1,8 +1,9 @@
+[MASTER_REFERENCE(10).md](https://github.com/user-attachments/files/31324001/MASTER_REFERENCE.10.md)
 [MASTER_REFERENCE(9).md](https://github.com/user-attachments/files/31315428/MASTER_REFERENCE.9.md)
 [MASTER_REFERENCE(8).md](https://github.com/user-attachments/files/31309833/MASTER_REFERENCE.8.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
-<!-- Last touched 2026-08-21 (cont): camera control panel BUILT + PROVEN LIVE on rig; bench/rig two-stage model recorded. -->
+<!-- Last touched 2026-08-21 (eve): COEXISTENCE PROVEN live + first clean verified capture; Open3D installed on Jetson; save-order fix; First Fusion step schedule (7O) folded in. -->
 Last updated: 2026-08-21 (session: Point-LIO texturing bridge BUILT + proven cold; odometry-engine fork 7N added)
 
 > This is the TOP document. Narrative history lives in PLAN_NEXT_SESSION.md (archived
@@ -88,13 +89,18 @@ real Point-LIO output (runbook HOT-1/2 + COLD-1/2).
    place (isolates rotation + fidelity), NOT hallway-walk. Bench tooling READY: camera_control.py
    (exposure/gain/colour-temp, proven live) for taming exposure before a pan.
 
->>> NEXT SESSION STARTS HERE: **FIRST COMBINED CAMERA + POINT-LIO CAPTURE** (2026-08-21).
-   Point-LIO already tracks (7M); the texturing bridge is built + proven cold (7N + runbook).
-   The remaining unknown is COEXISTENCE (camera + Point-LIO running together) + the first real
-   end-to-end run. COLD-PREP FIRST (no rig): Open3D on the Jetson (runbook COLD-PREP 0) + the
-   ~/tex_env venv (COLD-PREP 1). Then HOT-1 (20s stationary coexistence test), HOT-2 (stop-and-go
-   pan geometry sanity), then rig OFF -> COLD-1/2 (match + texture). One step at a time, proven
-   before moving. Full sequence + PASS gates: TEXTURE_BRIDGE_RUNBOOK.md. Odometry-engine fork: 7N.
+>>> NEXT SESSION STARTS HERE: **FIRST FUSION — Phase A cold prep, then a recorded capture** (2026-08-21 eve).
+   COEXISTENCE IS PROVEN (camera + Point-LIO ran together live, coherent room map — the big
+   unknown is answered). First clean VERIFIED capture exists (1.1M pts, room-sized, saved right).
+   Open3D installed + verified on Jetson. RViz preset saved (Points, decay 5). Assets on Jetson:
+   run_point_lio.sh + PointLIO icon (sources BOTH ws, launches L2 mapping; does NOT start driver).
+   GOAL NOW: a MANIPULABLE FUSED ARTIFACT (LiDAR mesh + camera imagery you can orbit). Quality
+   does not matter — existence does. Follow the small-step schedule in **7O**: Phase A [COLD] prep
+   (tools to Jetson, ~/tex_env venv, extrinsic check, pre-write record cmd) — all doable with no rig
+   — then Phase B [HOT] short recorded stationary capture (STILL init; stop order = Point-LIO Ctrl-C
+   FIRST -> confirm PCD timestamp -> rescue PCD to timestamped name -> then kill LiDAR), then Phase C
+   [COLD] matcher -> bridge -> open the fused mesh. OPEN RISK: Point-LIO DIVERGES on careless/fast
+   init (kilometre smear); still init gave a clean map. One step at a time, proven before moving.
 
 HOW TO READ THIS DOC: sections 1-6 are lookup tables (hardware, calibration values, nodes,
 files, data, gotchas). Section 7 = stage dashboard. 7B = camera-branch plan. 7C = IMU
@@ -233,6 +239,9 @@ detailed status. 8 = session log. Narrative history is in PLAN_NEXT_SESSION.md.
 | ts_check2.py | timestamp-regularity check | on Jetson |
 | camera_control.py | touch panel: exposure+gain+colour-temp via v4l2 | on Jetson ~/, PROVEN LIVE 2026-08-21 (326 lines; --selftest passes) |
 | CameraControl.desktop | icon launcher for camera_control.py | on Jetson ~/, working (Exec=python3 ~/camera_control.py) |
+| run_point_lio.sh | sources ros2_ws + point_lio_ws, launches L2 mapping (does NOT start driver) | on Jetson ~/, PROVEN 2026-08-21 |
+| PointLIO.desktop | icon launcher -> ~/run_point_lio.sh | on Jetson ~/Desktop |
+| loam_livox.rviz | Point-LIO RViz preset | EDITED 2026-08-21: CloudRegistered Style=Points, Decay=5 (was Flat Squares/30); backup .rviz.backup |
 | ~/Desktop/calib_intrinsics_20260813.yaml | VETTED intrinsics | SOLID |
 | ~/Desktop/extrinsic_20260816.yaml | VETTED extrinsic | SOLID |
 
@@ -296,6 +305,21 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
   auto_exposure=1 (Manual) before exposure_time_absolute bites. (Learned live 2026-08-21.)
 - **B0578 COLOUR-TEMP CEILING = 6500K** (white_balance_temperature max=6500, NOT 10000).
   Cooler than 6500K is a post/grade or camera-upgrade item, not a capture setting.
+- **POINT-LIO SAVE ORDER (cost us an hour 2026-08-21)**: scans.pcd is written ONLY on a clean
+  SIGINT to Point-LIO. Stop Rig / hard-kill / killing the LiDAR FIRST starves Point-LIO -> NO save,
+  and you silently re-read an OLD run's file. RULE: Ctrl-C Point-LIO FIRST -> `stat` the pcd to
+  confirm the timestamp is NOW -> THEN kill LiDAR (heat cost of the wait is ~2-4s; use SHORT captures).
+  For a throwaway look, kill-LiDAR-first is fine (no save wanted).
+- **PCD FIXED-NAME OVERWRITE**: pcd_save writes ONE fixed path (…/PCD/scans.pcd), overwritten every
+  run. RESCUE it immediately after a good capture: `cp …/PCD/scans.pcd ~/Desktop/scans_<stamp>.pcd`.
+  Running Point-LIO by the bare icon skips the timestamped copy the capture script would do.
+- **POINT-LIO DIVERGENCE (open risk, 2026-08-21)**: careless/fast init can make Point-LIO run away —
+  the saved cloud becomes a kilometre-long streak (extent ~1300m Z), a trajectory smear not a room.
+  A DEAD-STILL init gave a clean room (1.1M pts, ~8x5x3m). Always VERIFY a capture's extent before
+  trusting it (Open3D one-liner); RViz can look fine while the save diverged. Run-to-run reliability
+  is NOT yet proven — characterise WHEN it diverges before buying hardware to "fix" it (see 7O note).
+- **auto_exposure / white_balance = interval:-1 memory note**: pcd_save interval:-1 accumulates the
+  WHOLE session into one in-memory pcd (config comment warns of memory crash on long runs). Keep captures short.
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 7. STAGE STATUS (the one-glance dashboard)
@@ -1815,6 +1839,58 @@ OPEN STRATEGIC FLAG (from 7K, still unresolved): confirm whether the rig's real 
 is GEOMETRY or RELIGHTING. If relighting, prioritize proving that path once geometry is clean.
 
 ═══════════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════════
+## 7O. FIRST FUSION — STEP SCHEDULE (small doable steps to a manipulable fused artifact)
+═══════════════════════════════════════════════════════════════════════════
+GOAL: a textured 3D artifact (LiDAR geometry + camera imagery) from a LIVE combined capture,
+that OPENS and can be ORBITED. QUALITY DOES NOT MATTER — existence + manipulability is the bar.
+[COLD]=no rig/no heat. [HOT]=L2 on, move with purpose. Do in order; don't start a step until
+the prior one PASSES. (Full standalone copy: FIRST_FUSION_STEPS.md.)
+
+START STATE (true as of 2026-08-21 eve): coexistence proven; save-order fix known; one clean
+verified capture (1.1M pts, room-sized); Open3D installed+verified on Jetson; bridge (matcher+
+baker) proven cold on the OLD dense cloud.
+
+### PHASE A — COLD PREP (ready everything before any heat)
+- A1 [COLD] Tools to Jetson (download-on-Jetson + mv): pointlio_pose_matcher.py,
+  pointlio_to_texture.py, per_shot_texture.py.  DONE: both --selftest print ALL PASS.
+- A2 [COLD] `python3 -m venv ~/tex_env`; in it `pip install open3d rosbags opencv-python numpy`.
+  DONE: import of all four prints ok. (Isolates numpy from system ROS2 — the clash guard.)
+- A3 [COLD] Confirm per_shot_texture's hardcoded R_L2C/T_L2C == ~/Desktop/extrinsic_20260816.yaml.
+  DONE: match (this is what aligns colour to geometry).
+- A4 [COLD] Pre-write the record line (don't improvise hot):
+  `ros2 bag record -o ~/Desktop/fusioncap_$(date +%H%M%S) /aft_mapped_to_init /image_raw`.
+
+### PHASE B — HOT WINDOW (short, gated; the only heat). STILL init; SHORT; Point-LIO stop FIRST.
+- B1 [HOT] LiDAR ON -> Start Rig -> wait ~15s. DONE: hz on /unilidar/cloud, /unilidar/imu, /image_raw.
+- B2 [HOT] Point-LIO icon; hold DEAD STILL through IMU 1->100%. DONE: RViz shows a room, not a streak.
+- B3 [HOT] paste A4 record line (new terminal); hold still ~20-30s; Ctrl-C the BAG. DONE: bag folder written.
+- B4 [HOT] Ctrl-C POINT-LIO first; `stat` the pcd -> timestamp is NOW. DONE, then kill LiDAR/Stop Rig.
+- B5 [HOT->COLD] rescue: `cp …/PCD/scans.pcd ~/Desktop/fusioncap_<stamp>_scans.pcd`. L2 now fully OFF.
+
+### PHASE C — COLD PROCESSING (rig off; in ~/tex_env)
+- C1 [COLD] verify extent of rescued pcd: room-sized, NOT km smear. If smeared -> redo Phase B.
+- C2 [COLD] `pointlio_pose_matcher.py <bag> --image-topic /image_raw --dump-frames <bag>/frames`.
+  DONE: high match %, frames count == stamp count.
+- C3 [COLD] `pointlio_to_texture.py <rescued.pcd> posed_images.npz <bag>/frames --scale 3 --out first_fusion.png`.
+  DONE: prints faces + coverage, writes the render. <-- THE FUSION EXISTS.
+- C4 [COLD] open the MANIPULABLE artifact — view the textured mesh/cloud in Open3D, orbit it.
+  DONE: 3D window rotates the fused geometry. <-- ENDPOINT. (Note: C4 may need a small cold viewer
+  tool; the bridge currently outputs a render, not yet a one-command orbitable mesh.)
+
+### IF A STEP FAILS
+- B2 streaks -> bad init; redo dead-still. C1 smeared -> diverged run, don't process. C2 low match ->
+  odom/image clocks may not overlap (check bag has both + spans overlap). C3 texture OFFSET (not just
+  holey) -> pose/time mismatch or extrinsic drift (recheck A3). Holes/black -> meshing limiter, EXPECTED.
+
+### HARDWARE NOTE (considered, not adopted): external IMU (Taobotics TB100, ~$125)
+Could improve tracking reliability + bring the microsecond HARDWARE SYNC the L2 lacks (7B). BUT it
+does NOT offload Jetson compute, and adopting it is a PROJECT not a drop-in: new IMU->LiDAR extrinsic
+calibration, config rework (non-native IMU topic), and time-sync wiring — and Point-LIO's whole value
+(7N) is being tailored to the L2's native IMU. VALIDATE that divergence is actually an IMU problem
+(vs. init/motion technique) before spending. Filed as an avenue, not a plan.
+
+═══════════════════════════════════════════════════════════════════════════
 ## 8. SESSION UPDATE LOG (append one line per session; values above stay current)
 ═══════════════════════════════════════════════════════════════════════════
 - 2026-08-17: Built framework + camera options. Found camera framerate limit (30/60/80
@@ -1979,3 +2055,20 @@ is GEOMETRY or RELIGHTING. If relighting, prioritize proving that path once geom
   recorded the BENCH vs RIG two-stage model (see NEXT-SESSION block) + that capture is a 270 pan-in-
   place. Panel is a bench-prep asset for the late-bench combined capture; relight downgraded to one
   prong, ACCURATE 3D MODELLING (beat Polycam "WORST CASE SCENARIO.PNG" — melt/holes) is the main focus.
+- 2026-08-21 (eve): MILESTONE — COEXISTENCE PROVEN. Camera + Point-LIO ran together live on the rig;
+  RViz showed a coherent room (walls/archway/floor/ceiling), the big load-bearing unknown answered.
+  Also: first CLEAN VERIFIED capture (1.1M pts, ~8x5x3m room, saved correctly). Open3D installed +
+  functionally verified on the Jetson (official aarch64 CPU wheel; numpy 1.26.4 left untouched;
+  meshing test passed) — COLD-PREP 0 done. RViz preset saved into loam_livox.rviz (CloudRegistered
+  Style=Points, Decay=5). New assets on Jetson: run_point_lio.sh (sources both ws, launches L2
+  mapping, does NOT start the driver) + PointLIO icon. HARD LESSONS: (1) SAVE ORDER — scans.pcd saves
+  only on a clean Point-LIO SIGINT; Stop Rig / killing LiDAR first = no save, and you silently re-read
+  an old run. Fix: Ctrl-C Point-LIO FIRST -> confirm pcd timestamp -> then kill LiDAR. (2) PCD is
+  fixed-name, overwritten each run — rescue to a timestamped copy immediately. (3) DIVERGENCE is real:
+  careless init made Point-LIO run away into a ~1.3km trajectory smear (verified via extent + shape
+  plots); DEAD-STILL init gave the clean room. Always verify extent before trusting a capture — RViz
+  can look fine while the save is garbage. Run-to-run reliability NOT yet proven (open risk). Explored
+  but did not adopt: external IMU (TB100) for reliability + hardware sync — validate divergence-is-IMU
+  first (7O note). Drew up the FIRST FUSION step schedule (7O + FIRST_FUSION_STEPS.md): small gated
+  cold/hot steps to a manipulable fused artifact; quality does not matter, existence does. NEXT: 7O
+  Phase A cold prep, then a short recorded capture.
