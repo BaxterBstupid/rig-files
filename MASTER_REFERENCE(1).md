@@ -1,4 +1,3 @@
-[MASTER_REFERENCE(7).md](https://github.com/user-attachments/files/31285455/MASTER_REFERENCE.7.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
 Last updated: 2026-08-17 (session: framework + RTAB scoping)
@@ -1603,6 +1602,51 @@ KEY IMPLICATIONS (honest):
   - CAVEAT: values sourced from the ROS1 official L2 config; the ROS2 port SHOULD match (same
     sensor, direct port) but VERIFY the ROS2 repo ships config/unilidar_l2.yaml; if missing,
     create it from these exact values + adapt the launch to ROS2 .launch.py form.
+
+═══════════════════════════════════════════════════════════════════════════
+## 7M. *** POINT-LIO WORKS — ROTATION BUG BEATEN (2026-08-20, first real run) ***
+═══════════════════════════════════════════════════════════════════════════
+MILESTONE: the pivot delivered on the FIRST real L2 capture. The rotation-under-tracking bug
+that made RTAB a dead end is SOLVED by Point-LIO.
+
+BUILD: point_lio_ros2 built clean on the Jetson Orin (2min, no aarch64 drama - livox+Eigen
+already present). L2 config shipped correct as-is (verified vs Master). 3 pkgs: livox_ros_driver2,
+unitree_lidar_ros2, point_lio - all built + registered.
+
+CAPTURE (first hot run): LiDAR driver (unitree_lidar_ros2 launch.py) + Point-LIO
+(mapping_unilidar_l2.launch.py). IMU init 0->100% clean (held still ~5s). ~270 pan. Ctrl+C ->
+saved PCD. NOTE: the L2 launch AUTO-STARTS RViz (contradicts our "no rviz on Jetson" note; ran
+fine here but consider disabling for long field captures). Gotcha hit + fixed: a DUPLICATE
+driver instance ("bind udp port failed" spam) from a stale process - pkill -f
+unitree_lidar_ros2_node, relaunch ONE clean driver (port bind success, no spam).
+
+RESULT (inspect_pcd.py on scans.pcd, 104MB):
+  3,381,174 points (~21x the RTAB sampleB assembly's 159k).
+  DIMENSIONS: full extent 13.53 x 6.31 x 3.18 m ; robust(1-99%) 11.27 x 4.84 x 2.87 m.
+  *** Z (height) = 2.87 m = a REAL CEILING. RTAB's collapse was 13.0m tall. THIS IS THE PROOF. ***
+VISUAL (pointlio_views.png): front + side (height) views show a clean ~2.8m vertical band -
+  flat floor, defined ceiling, coherent walls. NO RTAB smear/tower. Top-down shows a real
+  ~13m floorplan (the swept space). Radial streaks = normal single-vantage rotational scan.
+
+VERDICT: geometry is CORRECT. Point-LIO TRACKS ROTATION. The blocker that corrupted every RTAB
+  pan (14.5deg yaw for 270 physical, 13m-tall collapse, half-room-missing) is BEATEN. Confirmed
+  by numbers (2.87m vs 13m) AND by eye (straight floor/ceiling, real room).
+
+HONEST SCOPE (what this does + does NOT prove):
+  PROVES: odometry/rotation is solved; Point-LIO builds + runs on our Jetson; L2 config correct;
+    dense correct geometry from a pan.
+  DOES NOT YET PROVE: the full DELIVERABLE. This is GEOMETRY ONLY (no colour/texture). The
+    texturing/relight bridge to Point-LIO output (.pcd + odometry, NOT an RTAB .db) is the NEXT
+    build. per_shot_texture.py engine survives; a new bridge replaces db_to_texture.py.
+  Also: single-vantage pan -> radial/uneven density; a walked multi-position capture fills better.
+
+NEXT (post-milestone):
+  1. Build the texturing bridge: Point-LIO cloud/odometry + timestamp-matched camera images ->
+     per_shot_texture. (The genuinely new work; RTAB .db was the old input.)
+  2. Consider disabling RViz in the L2 launch for lean field capture.
+  3. Desktop launcher (run_point_lio.sh + PointLIO.desktop already drafted) - prove manually
+     first (done), then the icon.
+  4. Multi-position / walked capture for fuller density once texturing works.
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 7L. POINT-LIO PIVOT — STEP PLAN (decided 2026-08-20, next session)
