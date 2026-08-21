@@ -1,9 +1,10 @@
+[MASTER_REFERENCE(11).md](https://github.com/user-attachments/files/31324395/MASTER_REFERENCE.11.md)
 [MASTER_REFERENCE(10).md](https://github.com/user-attachments/files/31324001/MASTER_REFERENCE.10.md)
 [MASTER_REFERENCE(9).md](https://github.com/user-attachments/files/31315428/MASTER_REFERENCE.9.md)
 [MASTER_REFERENCE(8).md](https://github.com/user-attachments/files/31309833/MASTER_REFERENCE.8.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
-<!-- Last touched 2026-08-21 (eve): COEXISTENCE PROVEN live + first clean verified capture; Open3D installed on Jetson; save-order fix; First Fusion step schedule (7O) folded in. -->
+<!-- Last touched 2026-08-21 (eve/inventory): full toolkit inventoried; texturing engine per_shot_texture.py FOUND + verified (reproduces sampleB exactly), secured in 3 places; 7O A1/C1/START-STATE corrected. -->
 Last updated: 2026-08-21 (session: Point-LIO texturing bridge BUILT + proven cold; odometry-engine fork 7N added)
 
 > This is the TOP document. Narrative history lives in PLAN_NEXT_SESSION.md (archived
@@ -240,6 +241,8 @@ detailed status. 8 = session log. Narrative history is in PLAN_NEXT_SESSION.md.
 | camera_control.py | touch panel: exposure+gain+colour-temp via v4l2 | on Jetson ~/, PROVEN LIVE 2026-08-21 (326 lines; --selftest passes) |
 | CameraControl.desktop | icon launcher for camera_control.py | on Jetson ~/, working (Exec=python3 ~/camera_control.py) |
 | run_point_lio.sh | sources ros2_ws + point_lio_ws, launches L2 mapping (does NOT start driver) | on Jetson ~/, PROVEN 2026-08-21 |
+| per_shot_texture.py | THE fusion engine (mesh+per-face texture; made sampleB) | ~/Desktop/ (10,492 B) + rig-files; recovered from transcript 2026-08-20-16-31-39, reproduces sampleB EXACTLY (99%/450,304 tris/0.63) |
+| inspect_pcd.py | C1 coherence checker (own PCD reader, matplotlib only, no Open3D; auto-verdict vs RTAB 13m) | on Jetson ~/, PROVEN (made pointlio_views.png) |
 | PointLIO.desktop | icon launcher -> ~/run_point_lio.sh | on Jetson ~/Desktop |
 | loam_livox.rviz | Point-LIO RViz preset | EDITED 2026-08-21: CloudRegistered Style=Points, Decay=5 (was Flat Squares/30); backup .rviz.backup |
 | ~/Desktop/calib_intrinsics_20260813.yaml | VETTED intrinsics | SOLID |
@@ -1847,13 +1850,22 @@ that OPENS and can be ORBITED. QUALITY DOES NOT MATTER — existence + manipulab
 [COLD]=no rig/no heat. [HOT]=L2 on, move with purpose. Do in order; don't start a step until
 the prior one PASSES. (Full standalone copy: FIRST_FUSION_STEPS.md.)
 
-START STATE (true as of 2026-08-21 eve): coexistence proven; save-order fix known; one clean
-verified capture (1.1M pts, room-sized); Open3D installed+verified on Jetson; bridge (matcher+
-baker) proven cold on the OLD dense cloud.
+START STATE (true as of 2026-08-21 eve, post-inventory): coexistence proven; save-order fix known;
+one clean verified capture (1.1M pts, room-sized); Open3D installed+verified on Jetson; bridge
+(matcher+baker) proven cold on the OLD dense cloud. INVENTORY RESULT: the texturing ENGINE
+per_shot_texture.py is FOUND + SECURED — recovered VERBATIM from transcript 2026-08-20-16-31-39
+(the three multi-view fns compose_world_to_cam/face_normals/best_image_per_face that the B1 bug had
+dropped), and VERIFIED to reproduce sampleB_render.png EXACTLY (99% coverage / 450,304 tris /
+mean 0.63 on the real sampleB db). It now lives in THREE places: ~/Desktop/per_shot_texture.py
+(10,492 B), rig-files repo, and pasteable. Ground-truth source of record = that transcript.
+inspect_pcd.py (on Jetson) is the C1 coherence checker (own PCD reader, matplotlib only, no Open3D;
+auto-verdict vs the RTAB 13m collapse signature). analyze_l2_imu.py (on Jetson) = divergence diagnostic.
 
 ### PHASE A — COLD PREP (ready everything before any heat)
-- A1 [COLD] Tools to Jetson (download-on-Jetson + mv): pointlio_pose_matcher.py,
-  pointlio_to_texture.py, per_shot_texture.py.  DONE: both --selftest print ALL PASS.
+- A1 [COLD] Place the TWO bridge scripts next to the engine on the Jetson (engine per_shot_texture.py
+  is ALREADY on ~/Desktop — verified). Put pointlio_pose_matcher.py + pointlio_to_texture.py in the
+  SAME folder as per_shot_texture.py (Piece 3 imports per_shot_texture, so co-locate them).
+  DONE: both --selftest print ALL PASS.
 - A2 [COLD] `python3 -m venv ~/tex_env`; in it `pip install open3d rosbags opencv-python numpy`.
   DONE: import of all four prints ok. (Isolates numpy from system ROS2 — the clash guard.)
 - A3 [COLD] Confirm per_shot_texture's hardcoded R_L2C/T_L2C == ~/Desktop/extrinsic_20260816.yaml.
@@ -1869,7 +1881,9 @@ baker) proven cold on the OLD dense cloud.
 - B5 [HOT->COLD] rescue: `cp …/PCD/scans.pcd ~/Desktop/fusioncap_<stamp>_scans.pcd`. L2 now fully OFF.
 
 ### PHASE C — COLD PROCESSING (rig off; in ~/tex_env)
-- C1 [COLD] verify extent of rescued pcd: room-sized, NOT km smear. If smeared -> redo Phase B.
+- C1 [COLD] verify coherence with the existing tool: `python3 ~/inspect_pcd.py <rescued.pcd>` ->
+  room-sized extent + a coherent floorplan in pointlio_views.png, NOT a km smear. Smeared -> redo Phase B.
+  (Better than a one-liner: own PCD reader, no Open3D/venv needed, auto-verdict vs RTAB 13m collapse.)
 - C2 [COLD] `pointlio_pose_matcher.py <bag> --image-topic /image_raw --dump-frames <bag>/frames`.
   DONE: high match %, frames count == stamp count.
 - C3 [COLD] `pointlio_to_texture.py <rescued.pcd> posed_images.npz <bag>/frames --scale 3 --out first_fusion.png`.
@@ -2072,3 +2086,18 @@ calibration, config rework (non-native IMU topic), and time-sync wiring — and 
   first (7O note). Drew up the FIRST FUSION step schedule (7O + FIRST_FUSION_STEPS.md): small gated
   cold/hot steps to a manipulable fused artifact; quality does not matter, existence does. NEXT: 7O
   Phase A cold prep, then a short recorded capture.
+- 2026-08-21 (eve/inventory): full desktop+home toolkit inventory (from a desktop screenshot +
+  ls/find on the Jetson) to confirm nothing needed is missing before First Fusion. KEY RESULT: the
+  texturing ENGINE per_shot_texture.py — the load-bearing file Piece 3 imports, the one that made
+  sampleB_render.png — was the B1-bug casualty (working version never saved; outputs copy was missing
+  the 3 multi-view fns). Today it was RECOVERED VERBATIM from transcript 2026-08-20-16-31-39 and
+  VERIFIED to reproduce sampleB exactly (99% / 450,304 tris / mean 0.63 on the real db) — recovered,
+  not reinvented. Now secured in 3 places (~/Desktop, rig-files repo, pasteable); ground-truth source
+  = that transcript. Inventory also confirmed: fusion ALREADY proven (sampleB) but only on OLD/RTAB-era
+  geometry — cloud.ply is the 12.3m RTAB-collapse relic, real_scene_colored/fused_2d are preview/2D,
+  NOT current fused artifacts; so First Fusion (fusion on live POINT-LIO geometry) is genuinely the
+  right next milestone, not a redo. Existing on-Jetson tools folded into 7O: inspect_pcd.py = C1
+  coherence check (no Open3D needed), analyze_l2_imu.py = divergence diagnostic. 7O corrected: engine
+  already present so A1 = place only the 2 bridge scripts next to it; C1 uses inspect_pcd.py. Also
+  noted: multi-line terminal paste MANGLES large files on this box (proved again); reliable route =
+  download ON the Jetson + mv (operator is always on the Jetson). NEXT: 7O Phase A assembly.
