@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=Camera Control
+Exec=gnome-terminal -- bash -c "python3 /home/fasterbybaxter/camera_control.py"
+Icon=camera-video
+Terminal=false
