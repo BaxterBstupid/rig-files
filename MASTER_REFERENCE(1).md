@@ -1,6 +1,8 @@
+[MASTER_REFERENCE(9).md](https://github.com/user-attachments/files/31315428/MASTER_REFERENCE.9.md)
 [MASTER_REFERENCE(8).md](https://github.com/user-attachments/files/31309833/MASTER_REFERENCE.8.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
+<!-- Last touched 2026-08-21 (cont): camera control panel BUILT + PROVEN LIVE on rig; bench/rig two-stage model recorded. -->
 Last updated: 2026-08-21 (session: Point-LIO texturing bridge BUILT + proven cold; odometry-engine fork 7N added)
 
 > This is the TOP document. Narrative history lives in PLAN_NEXT_SESSION.md (archived
@@ -77,6 +79,14 @@ reviewed, but bakes lit colour -> not relightable). Open3D-on-Jetson = official 
 isl-org#6885's CUDA build does NOT apply); run cold processing in an isolated ~/tex_env venv (numpy
 clash mitigation). NEXT is the first COMBINED camera+Point-LIO hot capture, then run the bridge on
 real Point-LIO output (runbook HOT-1/2 + COLD-1/2).
+
+>>> TWO-STAGE MODEL (recorded 2026-08-21): BENCH = build + prove architecture (big monitor,
+   Claude real-time, adjustable LiDAR/camera array). RIG = execute the proven pipeline
+   UNTETHERED (Jetson on platform, battery, Waveshare 7" only). Rule: drive everything that
+   needs a screen / live help / hands on the array to CLOSURE ON THE BENCH. The first combined
+   capture is therefore a LATE-BENCH milestone, not early-rig. Capture geometry = 270 pan-in-
+   place (isolates rotation + fidelity), NOT hallway-walk. Bench tooling READY: camera_control.py
+   (exposure/gain/colour-temp, proven live) for taming exposure before a pan.
 
 >>> NEXT SESSION STARTS HERE: **FIRST COMBINED CAMERA + POINT-LIO CAPTURE** (2026-08-21).
    Point-LIO already tracks (7M); the texturing bridge is built + proven cold (7N + runbook).
@@ -221,6 +231,8 @@ detailed status. 8 = session log. Narrative history is in PLAN_NEXT_SESSION.md.
 | capture_coverage.py | Stage-1 coverage capture | Jetson-only |
 | dump_curves_v4.py | tau extraction (per-point time) | on Jetson |
 | ts_check2.py | timestamp-regularity check | on Jetson |
+| camera_control.py | touch panel: exposure+gain+colour-temp via v4l2 | on Jetson ~/, PROVEN LIVE 2026-08-21 (326 lines; --selftest passes) |
+| CameraControl.desktop | icon launcher for camera_control.py | on Jetson ~/, working (Exec=python3 ~/camera_control.py) |
 | ~/Desktop/calib_intrinsics_20260813.yaml | VETTED intrinsics | SOLID |
 | ~/Desktop/extrinsic_20260816.yaml | VETTED extrinsic | SOLID |
 
@@ -277,6 +289,13 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
 - **NEVER reuse a capture filename** (fixed names silently destroy prior capture).
 - **end captures with `ls -lh` on real path** (a "wrote" log ≠ file exists).
 - **RViz cosmetic tilt**: room stands vertical because L2 mounted 90° — data is correct.
+- **AUTO-WB OVERRIDES MANUAL KELVIN**: B0578 `white_balance_temperature` shows
+  `flags=inactive` while `white_balance_automatic=1`. The colour-temp slider does NOTHING
+  until you UNCHECK "Auto white balance" (camera_control.py handles the order; if driving
+  v4l2 by hand, set white_balance_automatic=0 FIRST). Same pattern for exposure: set
+  auto_exposure=1 (Manual) before exposure_time_absolute bites. (Learned live 2026-08-21.)
+- **B0578 COLOUR-TEMP CEILING = 6500K** (white_balance_temperature max=6500, NOT 10000).
+  Cooler than 6500K is a post/grade or camera-upgrade item, not a capture setting.
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 7. STAGE STATUS (the one-glance dashboard)
@@ -1942,3 +1961,21 @@ is GEOMETRY or RELIGHTING. If relighting, prioritize proving that path once geom
   (peer-reviewed Buildings 2025, but bakes lit colour). Yardstick from that paper: moving-capture
   ~8.3cm (NOT the 16mm static number); our 0.297px calib beats their 2.48px. All bridge files pushed
   to rig-files. NEXT: first COMBINED camera+Point-LIO hot capture (runbook HOT-1/2 -> COLD-1/2).
+- 2026-08-21 (cont): CAMERA CONTROL PANEL built + PROVEN LIVE on the rig. Motivation: a camera-
+  only bench look (Start Rig tolerates "LiDAR not publishing" and continues) put /image_raw on the
+  monitor at ~22fps and the operator's eye caught the real problem — a blown centre window, crushed
+  shadows, wandering blue white balance = auto-exposure/WB hunting on a high-dynamic-range scene.
+  Fix = a hand control. Built camera_control.py (tkinter, touch-sized for Waveshare): Exposure
+  (auto/manual + slider), GAIN (0-100, always-active, the other half of manual exposure), White
+  Balance / Colour Temperature (auto/manual + Kelvin slider). Verified against the REAL B0578
+  --list-ctrls-menus: auto_exposure(1=Manual,3=Auto), exposure_time_absolute(1-5000), gain(0-100),
+  white_balance_automatic, white_balance_temperature(2800-6500). Colour-temp slider CAPPED at the
+  true 6500K (was 10000 = would clamp). Logic self-test (--selftest) 5/5. LIVE ON RIG: exposure +
+  gain move the image in real time (watched in rqt_image_view); colour-temp needs Auto WB UNCHECKED
+  first (flags=inactive gotcha — now in section 6). Files: camera_control.py + CameraControl.desktop
+  (icon), both on Jetson ~/. TRANSFER LESSON (cost several rounds): multi-line terminal paste MANGLES
+  (drops lines) on this box, and browser uploads mis-name .desktop -> .download; the RELIABLE route is
+  download the file ON THE JETSON (operator is always on the Jetson) and `mv` it into place. Also
+  recorded the BENCH vs RIG two-stage model (see NEXT-SESSION block) + that capture is a 270 pan-in-
+  place. Panel is a bench-prep asset for the late-bench combined capture; relight downgraded to one
+  prong, ACCURATE 3D MODELLING (beat Polycam "WORST CASE SCENARIO.PNG" — melt/holes) is the main focus.
