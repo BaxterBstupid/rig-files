@@ -1,6 +1,7 @@
+[MASTER_REFERENCE(8).md](https://github.com/user-attachments/files/31309833/MASTER_REFERENCE.8.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
-Last updated: 2026-08-17 (session: framework + RTAB scoping)
+Last updated: 2026-08-21 (session: Point-LIO texturing bridge BUILT + proven cold; odometry-engine fork 7N added)
 
 > This is the TOP document. Narrative history lives in PLAN_NEXT_SESSION.md (archived
 > below this in priority). When a value changes, edit it HERE in place — don't append.
@@ -62,11 +63,28 @@ is the mesh/delighting/render pipeline in 7F. Colour Way A fix (7D) remains avai
 no longer the priority. Camera upgrade (to a hardware-triggered model that kills tau) is planned —
 see 7B for the if/then branch.
 
->>> NEXT SESSION STARTS HERE: **PIVOT TO POINT-LIO** (decided 2026-08-20).
-   The RTAB rotation bug is not fixed and won't be; the fix is Point-LIO (Unitree
-   demonstrates clean L2 rotation-tracked maps). See 7K for full rationale + 7L for the
-   step plan. Do the COLD-PREP items in 7L first (build plan, config values, extrinsic
-   reformat) BEFORE any rig-on. One step at a time, proven before moving.
+*** UPDATE 2026-08-20/21 — SUPERSEDES the RTAB-centric summary above: ***
+POINT-LIO WORKS (7M). The pivot is DONE: point_lio_ros2 built clean on the Jetson (~2min) and
+BEAT the rotation bug on the first real L2 pan — 2.87m ceiling vs RTAB's 13m collapse, a
+3.38M-point coherent room. Odometry/rotation is SOLVED. The TEXTURING BRIDGE to Point-LIO output
+(7M-NEXT #1) is now BUILT + PROVEN COLD (2026-08-21): pointlio_pose_matcher.py (Piece 2, pose
+interpolation, self-tested to 5e-16m / 0deg), pointlio_to_texture.py (Piece 3, NEW multi-view
+per-face baker), capture_pointlio_texture.sh (Piece 1), and TEXTURE_BRIDGE_RUNBOOK.md. The whole
+bridge was run on the real 161k dense cloud + a real image -> 385k-face mesh -> 90.3% photoreal
+render (matches the prior probe). Convention locked to per_shot_texture to 7e-16m. ODOMETRY-ENGINE
+CHOICE is now a FLAGGED FORK (7N): Point-LIO chosen + PROVEN; FAST-LIVO2 held in reserve (peer-
+reviewed, but bakes lit colour -> not relightable). Open3D-on-Jetson = official pip wheel (CPU-only;
+isl-org#6885's CUDA build does NOT apply); run cold processing in an isolated ~/tex_env venv (numpy
+clash mitigation). NEXT is the first COMBINED camera+Point-LIO hot capture, then run the bridge on
+real Point-LIO output (runbook HOT-1/2 + COLD-1/2).
+
+>>> NEXT SESSION STARTS HERE: **FIRST COMBINED CAMERA + POINT-LIO CAPTURE** (2026-08-21).
+   Point-LIO already tracks (7M); the texturing bridge is built + proven cold (7N + runbook).
+   The remaining unknown is COEXISTENCE (camera + Point-LIO running together) + the first real
+   end-to-end run. COLD-PREP FIRST (no rig): Open3D on the Jetson (runbook COLD-PREP 0) + the
+   ~/tex_env venv (COLD-PREP 1). Then HOT-1 (20s stationary coexistence test), HOT-2 (stop-and-go
+   pan geometry sanity), then rig OFF -> COLD-1/2 (match + texture). One step at a time, proven
+   before moving. Full sequence + PASS gates: TEXTURE_BRIDGE_RUNBOOK.md. Odometry-engine fork: 7N.
 
 HOW TO READ THIS DOC: sections 1-6 are lookup tables (hardware, calibration values, nodes,
 files, data, gotchas). Section 7 = stage dashboard. 7B = camera-branch plan. 7C = IMU
@@ -1643,16 +1661,85 @@ HONEST SCOPE (what this does + does NOT prove):
 NEXT (post-milestone):
   1. Build the texturing bridge: Point-LIO cloud/odometry + timestamp-matched camera images ->
      per_shot_texture. (The genuinely new work; RTAB .db was the old input.)
+     *** DONE 2026-08-21 — bridge BUILT + PROVEN COLD. Piece 2 pointlio_pose_matcher.py (pose
+     interp, self-tested), Piece 3 pointlio_to_texture.py (multi-view per-face baker), Piece 1
+     capture_pointlio_texture.sh, TEXTURE_BRIDGE_RUNBOOK.md. Proven photoreal on real data
+     (161k cloud -> 385k mesh -> 90.3% render). Remaining: first COMBINED hot capture. See 7N. ***
   2. Consider disabling RViz in the L2 launch for lean field capture.
   3. Desktop launcher (run_point_lio.sh + PointLIO.desktop already drafted) - prove manually
      first (done), then the icon.
   4. Multi-position / walked capture for fuller density once texturing works.
 
 ═══════════════════════════════════════════════════════════════════════════
+## 7N. ⚠️ DECISION FORK — POINT-LIO (chosen + PROVEN) vs FAST-LIVO2 (reserve) ⚠️
+═══════════════════════════════════════════════════════════════════════════
+COLD READER: returnable decision point, like 7G. We chose Point-LIO for odometry and it is now
+PROVEN working (7M). If it ever needs replacing, DON'T re-derive — return HERE; FAST-LIVO2 is the
+documented, peer-reviewed fallback, with its cost stated.
+
+### THE FORK (decided 2026-08-21)
+Two LiDAR-inertial(-visual) odometry paths for the L2:
+  - POINT-LIO (CHOSEN + PROVEN): LiDAR-inertial. Algorithm is Unitree's OWN, tailor-made and tuned
+    for the L-series — ships a real L2 config (lidar_type 5, scan_line 18, satu/extrinsic values).
+    We build the ROS2 PORT dfloreaa/point_lio_ros2 (community packaging of that L2-tuned algorithm).
+    Geometry + camera texture stay SEPARABLE. Built ~2min + beat the rotation bug on the first pan (7M).
+  - FAST-LIVO2 (RESERVE, NOT chosen): LiDAR-inertial-VISUAL. Peer-reviewed, proven real-time on
+    low-power ARM for large outdoor structure capture (Jiang et al., Buildings 2025, 15, 1458 — a
+    140m arch bridge; same low-cost non-repetitive-LiDAR + camera + IMU class on an ARM board).
+
+### WHY POINT-LIO (the reasoning to re-examine if backtracking)
+  1. TAILOR-MADE FOR OUR EXACT SENSOR. Manufacturer-authored algorithm + L2-tuned config = fewer
+     unknowns for the L2's non-repetitive rosette + IMU than a general LIVO stack tuned from scratch.
+  2. KEEPS TEXTURE SEPARABLE = RELIGHTABLE. FAST-LIVO2 / R3LIVE-class systems BAKE lit colour into
+     the map at capture time (their VIO reconstructs radiance under the CAPTURE lighting). That is the
+     WRONG artifact for day->night relight — you cannot cleanly delight a pre-fused map. Point-LIO
+     gives clean geometry; our bridge drapes texture SEPARATELY + deliberately. Relight is the rig's
+     differentiator (7K) -> DECISIVE.
+  3. NOW PROVEN ON OUR RIG (7M): not a gamble. Rotation solved, 2.87m ceiling vs 13m collapse.
+
+### HONEST CAVEATS (don't overstate the claim)
+  - "Written for the L2" = the ALGORITHM + TUNING are Unitree's and L2-specific; the ROS2 PORT
+    (dfloreaa) is third-party packaging. FAST-LIVO2 also supports Livox/Unitree-class sensors — the
+    edge is TAILORING, not exclusivity.
+  - Unitree's code quality is below par (audit: scrambled-quaternion TF in the driver, 7C; known-weak
+    SDK IMU handling). We ACCEPT the tailoring and VERIFY the feed rather than trust it. Tailoring >
+    polish — but ONLY because we audit.
+
+### FAST-LIVO2 (RESERVE) — EVIDENCE + REALISTIC YARDSTICK (from the Buildings 2025 paper)
+  - They chose FAST-LIVO for real-time ARM performance on the same sensor class -> the reserve path
+    is demonstrably viable on hardware like ours.
+  - Their camera-LiDAR reprojection error = 2.48px; OUR calibration = 0.297px (we BEAT the published
+    baseline — external confirmation our foundation is sound).
+  - Moving-capture accuracy vs survey-grade TLS = 8.3cm (their stated hardware-class ceiling). USE
+    THIS as the realistic yardstick for our L2 on a MOVING pan — NOT the 16mm STATIC number. Judge
+    HOT-2 "coherent room" by SHAPE, not mm fidelity.
+  - Sync: they used HARDWARE triggering (Livox PPS + triggerable HIKROBOT cam, STM32, ~10ms). We
+    cannot (L2 has no sync GPIO, B0578 no trigger — 7B). They also state software sync DRIFTS over
+    long captures but is ADEQUATE for SHORT ones -> independently validates our stop-and-go / short-
+    capture mitigation (runbook C2).
+  - DISQUALIFIER for us: bakes lit colour -> not cleanly relightable.
+
+### CIRCUMSTANCES AT THE FORK (judge if changed on return)
+  Goal = client-facing photoreal RELIGHTABLE stills (7E). Point-LIO already works (7M). Texturing
+  bridge built + proven cold (2026-08-21). Jetson = Orin Nano 8GB, one-roof.
+
+### WHAT TRIGGERS BACKTRACKING TO FAST-LIVO2 (define it now)
+  Return here + switch if:
+  - the project decides GEOMETRY-MEASUREMENT (not relight) is the deliverable -> FAST-LIVO2's baked
+    colour stops being a disqualifier and its peer-reviewed ARM real-time performance wins; OR
+  - the Point-LIO -> texture -> relight path proves unworkable in a way FAST-LIVO2's fused approach
+    would avoid (UNLIKELY — the bridge is already built + proven cold).
+  On return: accept that FAST-LIVO2 BAKES lit colour -> relighting is traded away or moved to a
+  separate delight pass.
+
+═══════════════════════════════════════════════════════════════════════════
 ## 7L. POINT-LIO PIVOT — STEP PLAN (decided 2026-08-20, next session)
 ═══════════════════════════════════════════════════════════════════════════
 DECISION: pivot odometry from RTAB to Point-LIO. Rationale in 7K (RTAB rotation unfixable in
 practice; Point-LIO is the manufacturer-demonstrated fix for L2 rotation tracking).
+NOTE (2026-08-21): this pivot is DONE + PROVEN (7M). Odometry-engine choice is now a FLAGGED
+RETURNABLE FORK — see 7N (Point-LIO chosen + proven; FAST-LIVO2 reserve). Steps below are the
+historical build plan (kept for provenance; the build succeeded in ~2min per 7M).
 
 WHICH REPO (critical - do NOT use the wrong one):
 - Unitree's OFFICIAL repo github.com/unitreerobotics/point_lio_unilidar is ROS1 NOETIC /
@@ -1840,3 +1927,18 @@ is GEOMETRY or RELIGHTING. If relighting, prioritize proving that path once geom
   (view_frames) + launch odom/base frames + deskew config; fix so rotation tracks true
   angle BEFORE re-attempting the A pan. Depth-image warning = cosmetic (viz wants depth we
   don't have). User's odometry-sample instinct is what redirected us from the wrong fix.
+- 2026-08-21: TEXTURING BRIDGE (Point-LIO -> texture) BUILT + PROVEN COLD; odometry-engine FORK
+  (7N) added. Pulled the authoritative Master from the repo at session end and caught that 7M
+  already records Point-LIO WORKING (my in-context copy was stale — the republish protocol found it).
+  Built Piece 2 pointlio_pose_matcher.py (pose interp LERP+SLERP, self-tested to 5e-16m / 0deg;
+  output convention locked to per_shot_texture's compose_world_to_cam to 7e-16m), Piece 3
+  pointlio_to_texture.py (NEW multi-view per-face baker — best_image_per_face only SELECTED before),
+  Piece 1 capture_pointlio_texture.sh (real point_lio launch / topics / PCD path confirmed from the
+  actual repos), and TEXTURE_BRIDGE_RUNBOOK.md. Proved the whole bridge on the REAL 161k dense cloud
+  + real image -> 385k-face mesh -> 90.3% photoreal render. Debug/conflict scan: Piece2->3 file
+  interface EXACT (count/values/index); numpy clash mitigated by ~/tex_env venv; Open3D on Jetson =
+  official CPU pip wheel (isl-org#6885 CUDA build N/A); render_idx guarded. Added 7N fork: Point-LIO
+  chosen + PROVEN (tailor-made for L2; keeps texture separable = relightable); FAST-LIVO2 reserve
+  (peer-reviewed Buildings 2025, but bakes lit colour). Yardstick from that paper: moving-capture
+  ~8.3cm (NOT the 16mm static number); our 0.297px calib beats their 2.48px. All bridge files pushed
+  to rig-files. NEXT: first COMBINED camera+Point-LIO hot capture (runbook HOT-1/2 -> COLD-1/2).
