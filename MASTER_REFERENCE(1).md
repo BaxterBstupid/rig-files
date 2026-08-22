@@ -1,10 +1,11 @@
+[MASTER_REFERENCE(13).md](https://github.com/user-attachments/files/31334830/MASTER_REFERENCE.13.md)
 [MASTER_REFERENCE(11).md](https://github.com/user-attachments/files/31325639/MASTER_REFERENCE.11.md)
 [MASTER_REFERENCE(10).md](https://github.com/user-attachments/files/31324001/MASTER_REFERENCE.10.md)
 [MASTER_REFERENCE(9).md](https://github.com/user-attachments/files/31315428/MASTER_REFERENCE.9.md)
 [MASTER_REFERENCE(8).md](https://github.com/user-attachments/files/31309833/MASTER_REFERENCE.8.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
-<!-- Last touched 2026-08-21 (eve/inventory): full toolkit inventoried; texturing engine per_shot_texture.py FOUND + verified (reproduces sampleB exactly), secured in 3 places; 7O A1/C1/START-STATE corrected. -->
+<!-- Last touched 2026-08-22 (all-nighter): FIRST FUSION ACHIEVED end-to-end on live Point-LIO data; mission/design-philosophy added to header; mesher swapped Poisson->ball-pivoting (Poisson fatally fails on open room-scans); matcher fixed (typestore + bag-time clock); divergence reframed as displaced-cluster outliers; odom-cutoff-at-5.5s found. Image quality ~25% (mesher is the bottleneck). -->
 Last updated: 2026-08-21 (session: Point-LIO texturing bridge BUILT + proven cold; odometry-engine fork 7N added)
 
 > This is the TOP document. Narrative history lives in PLAN_NEXT_SESSION.md (archived
@@ -22,6 +23,37 @@ LiDAR+camera → calibrated fusion → RTAB-Map SLAM (builds a 3D map while you 
 textured mesh → Unreal Engine relighting. The user assembles/operates the physical rig
 and runs ALL machine commands (the assistant has a separate Linux sandbox and CANNOT
 touch the Jetson — it reasons, writes code/docs, and analyzes data the user pastes/uploads).
+
+WHY THIS EXISTS — THE MISSION (the gravity everything orbits; read before any technical call):
+This rig is a PRE-PRODUCTION INSTRUMENT FOR CINEMATOGRAPHY, not a scanning gadget. It does
+something not really done before: a true FUSING of photography and LiDAR into ONE WHOLE IMAGE.
+  - THE CAMERA GIVES US PLACE (what the space is, how it reads, the recognizable scene).
+  - THE LiDAR GIVES US MINUTE MEASUREMENT (exactly where surfaces are, to the tape measure).
+  - Meshed, they are a WHOLE, DELIVERABLE capture - dimensionally TRUE (a tape measure agrees)
+    AND photographically TRUE (the eye recognizes the real space), in correct registration. This
+    clean accurate fused capture IS the product - the gravity the whole project orbits. NOT rough
+    raw material for a rescue pass; if the foreground comes out rough/undeliverable, the project has
+    failed at its center no matter what post can patch.
+WE CANNOT MEASURE EVERYTHING, AND DON'T NEED TO. Wholeness = the FOREGROUND / PARALLAX ZONE
+(the stuff a camera moves past, that catches light, that other departments need dimensions for)
+being complete and true. Beyond that - sky, distant mountains - is PLACE-ONLY: the camera shoots it
+as a backdrop plate (skybox/dome/matte in Unreal), no LiDAR needed. A single camera has NO depth, so
+it cannot extend geometry; reach comes from MOVING the LiDAR. Far content is backdrop, not measurement.
+CANONICAL EXAMPLE - the barn shot (script says NIGHT, plate is DAY): We MEASURE the barn, fence,
+grass (parallax, physical, other departments need dimensions). Camera takes mountains + sky as PLACE
+(backdrop, swapped day->night in Unreal). Because the space is DIMENSIONALLY TRUE, we pre-light the
+night in a virtual space we can TRUST: a moonlight on a crane (we mapped BEYOND the frame so crane/
+rigging have measured space), seeing exactly where the barn's shadow falls, where edge light catches
+the fence; warm lights INSIDE the barn spilling from windows. Because the map is ACCURATE, the virtual
+answer IS the real answer: on shoot day we already know where the crane goes, which fixture is on it,
+which interior lights go where. The pre-viz is ACTIONABLE (a dept head commits crew + money to it),
+not merely illustrative. THAT is the innovation.
+WHY ACCURACY IS NON-NEGOTIABLE (Polycam's WORST CASE SCENARIO.PNG is the anti-reference): Polycam
+fails on BOTH axes at once - wrong DIMENSIONS (melt/billow/fused objects) AND wrong PLACE (distorted
+photo). And those are ONE failure: bad measurement drags place down with it (the photo is projected
+onto the mesh). If the barn's dimensions are wrong, the crane clears the roof in Unreal but HITS it on
+the day - the plan fails on location, the shoot eats the cost. Relight/backdrop/night is a DOWNSTREAM
+second pass that BUILDS ON the accurate capture; it never rescues a rough one.
 
 WORKING STYLE (critical, the user insists on this): ONE STEP AT A TIME, proven before
 moving on. NO menus of overlapping commands. COLD PREP before any "hot window" (LiDAR on)
@@ -90,18 +122,28 @@ real Point-LIO output (runbook HOT-1/2 + COLD-1/2).
    place (isolates rotation + fidelity), NOT hallway-walk. Bench tooling READY: camera_control.py
    (exposure/gain/colour-temp, proven live) for taming exposure before a pan.
 
->>> NEXT SESSION STARTS HERE: **FIRST FUSION — Phase A cold prep, then a recorded capture** (2026-08-21 eve).
-   COEXISTENCE IS PROVEN (camera + Point-LIO ran together live, coherent room map — the big
-   unknown is answered). First clean VERIFIED capture exists (1.1M pts, room-sized, saved right).
-   Open3D installed + verified on Jetson. RViz preset saved (Points, decay 5). Assets on Jetson:
-   run_point_lio.sh + PointLIO icon (sources BOTH ws, launches L2 mapping; does NOT start driver).
-   GOAL NOW: a MANIPULABLE FUSED ARTIFACT (LiDAR mesh + camera imagery you can orbit). Quality
-   does not matter — existence does. Follow the small-step schedule in **7O**: Phase A [COLD] prep
-   (tools to Jetson, ~/tex_env venv, extrinsic check, pre-write record cmd) — all doable with no rig
-   — then Phase B [HOT] short recorded stationary capture (STILL init; stop order = Point-LIO Ctrl-C
-   FIRST -> confirm PCD timestamp -> rescue PCD to timestamped name -> then kill LiDAR), then Phase C
-   [COLD] matcher -> bridge -> open the fused mesh. OPEN RISK: Point-LIO DIVERGES on careless/fast
-   init (kilometre smear); still init gave a clean map. One step at a time, proven before moving.
+>>> NEXT SESSION STARTS HERE: **MESHING QUALITY — make the fused image DELIVERABLE** (2026-08-22).
+   FIRST FUSION IS DONE: full chain proven end-to-end on LIVE Point-LIO data (capture -> matcher ->
+   mesh -> texture -> image). Output = first_fusion.png / first_fusion_hq.png on ~/Desktop. BUT image
+   quality is ~25% of deliverable (operator's eye; the old texture_probe.png actually looks better on
+   detail). THE BOTTLENECK IS THE MESHER, not the code (debug pass: all 3 files parse+import+selftest
+   clean). Ball-pivoting was swapped in tonight because Poisson FATALLY fails ("Failed to close loop")
+   on open room-scans - but ball-pivoting leaves HOLES: speckle at voxel 0.02, a regular "knitted"
+   WEAVE at 0.01. The probe's solid look was almost certainly POISSON (fills surfaces). SO NEXT:
+   resolve the mesher fork - get Poisson working on rooms (crop the problem region / linear_fit /
+   depth+scale / cleaner normals) OR properly tune ball-pivoting radii to close holes, OR hybrid.
+   Also lift quality via: fuller coverage (more camera views / a slow pan once divergence is understood),
+   and brighter capture (tonight's room was dim -> murky blue texture). FIRST cold task: restore the
+   engine's voxel size from 0.01 back to a sane value and decide the mesher. Pipeline + capture process
+   are PROVEN; this is a quality problem, sharply defined.
+   OPEN THREADS (not blocking, but real): (1) Point-LIO odometry STOPPED publishing at ~5.5s into a
+   ~50s run (17007 poses crammed in 5.5s @ ~3000Hz then silence) - the clean short capture only HAD
+   5.5s of odom, which is why it stayed coherent; investigate why it cuts out. (2) "Divergence" is
+   actually DISPLACED-CLUSTER OUTLIERS (long 79s capture = 92% coherent room + 7% clustered garbage
+   dragging extent to km; SOR doesn't catch clustered outliers; a distance-crop is UNFIT because film
+   sets span 2m-100m - need a scale-independent fix, ideally prevention). (3) repo eorua8801/
+   unitree-lidar-slam is a same-stack reference (same Point-LIO) - useful for CONFIG comparison
+   (theirs: lidar_type 1 / scan_line 4; ours: 5 / 18), NOT an engine to switch to.
 
 HOW TO READ THIS DOC: sections 1-6 are lookup tables (hardware, calibration values, nodes,
 files, data, gotchas). Section 7 = stage dashboard. 7B = camera-branch plan. 7C = IMU
@@ -284,6 +326,34 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 6. GOTCHAS & LANDMINES
+- **POISSON MESHING FATALLY FAILS ON ROOM-SCANS (2026-08-22)**: create_from_point_cloud_poisson
+  aborts with "Failed to close loop" on open interior scans (it wants a CLOSED/watertight volume; a
+  room scanned from inside is an OPEN surface). Not catchable as a Python exception - it kills the
+  process. Engine mesh_cloud was swapped to BALL-PIVOTING (works on open surfaces, only meshes where
+  points exist = honest to measurement, no invented geometry). Tradeoff: ball-pivoting leaves HOLES
+  (speckle @ voxel 0.02; regular "knitted" WEAVE @ 0.01 when radii don't match density). Quality fork
+  unresolved - Poisson gives solid surfaces (probe used it) but crashes; ball-pivoting runs but is holey.
+- **ROSBAGS 0.11.5 NEEDS A TYPESTORE (2026-08-22)**: AnyReader([Path(bag)]) now raises "Bag contains
+  no type definitions." Fix (applied to matcher, BOTH read loops): get_typestore(Stores.ROS2_HUMBLE)
+  and pass default_typestore=_ts. Humble bags don't embed type defs.
+- **POINT-LIO ODOM HEADER STAMPS ARE FROZEN - MATCH ON BAG TIME (2026-08-22)**: /aft_mapped_to_init
+  message HEADER stamps are frozen/identical (all ~1787358243.694) and ~53s BEFORE the recording, so
+  matching images (good headers) to poses on header-time gives 0 matches. FIX: match on BAG-RECORD time
+  (consistent across topics), not header stamp. Matcher read_bag now appends `bt` (bag time) for both
+  odom and images. This is why the first matcher run got 0/423, then 78 after the fix.
+- **POINT-LIO ODOM CUTS OUT (~5.5s) (2026-08-22, OPEN)**: in a ~50s recording, odom published only the
+  first ~5.5s (17007 msgs @ ~3000Hz, absurdly fast) then went silent while images kept coming ~44s more.
+  The clean short capture only HAD 5.5s of tracking - likely WHY it stayed coherent (no time to inject a
+  displaced cluster). Root cause unknown; investigate. Record /unilidar/imu on captures to autopsy.
+- **"DIVERGENCE" IS DISPLACED-CLUSTER OUTLIERS, NOT ESTIMATOR RUNAWAY (2026-08-22)**: operator's RViz
+  insight - both "diverged" and clean captures showed a coherent bounded room in RViz; a true estimate
+  runaway would be visible. Tested: the 73MB "13km" cloud is 89.6% within 5m, 91.7% within 10m, only
+  7.45% beyond 50m -> a real room + a CLUSTERED ~7% garbage blob dragging the bounding box. SOR (nb=20
+  std=2) barely touches it (clustered, not lonely fliers). A distance-crop "fixes" small rooms but is
+  UNFIT for film sets (2m cell to 100m hangar - no fixed scale). Need a SCALE-INDEPENDENT fix, ideally
+  prevention (why does the cluster get injected?). inspect_pcd.py's extent-based verdict is MISLEADING
+  on this (fooled by fliers) and its "RTAB 13m" reference string is stale (we're on Point-LIO).
+
 ═══════════════════════════════════════════════════════════════════════════
 - **STALE K**: cx=1032 (old, bad) vs cx=921 (good). Live nodes guard cx≥960. Old K
   =856.21/926.52 lurks in backups + quarantined pnp scripts. NEVER recal from
@@ -2101,3 +2171,25 @@ calibration, config rework (non-native IMU topic), and time-sync wiring — and 
   already present so A1 = place only the 2 bridge scripts next to it; C1 uses inspect_pcd.py. Also
   noted: multi-line terminal paste MANGLES large files on this box (proved again); reliable route =
   download ON the Jetson + mv (operator is always on the Jetson). NEXT: 7O Phase A assembly.
+- 2026-08-22 (all-nighter, the big one): **FIRST FUSION ACHIEVED** - the full chain ran end-to-end on
+  LIVE Point-LIO data for the first time (capture -> matcher -> ball-pivoting mesh -> per-face texture ->
+  first_fusion.png). Mesh 224k verts / 217k faces @ voxel 0.02, 66% faces textured from 78 matched frames,
+  ~65% render coverage. HQ re-run (voxel 0.01, scale 1): 654k verts / 548k faces but WORSE image (knitted
+  weave). Operator's eye: ~25% deliverable; the old texture_probe.png looks better on detail. VERDICT: the
+  MESHER is the quality bottleneck, not the code. Getting here required solving a chain of REAL seams, all
+  cold: (a) Poisson fatally fails on open room-scans -> swapped mesh_cloud to ball-pivoting; (b) rosbags
+  0.11.5 typestore requirement -> added get_typestore(ROS2_HUMBLE); (c) Point-LIO odom header stamps frozen
+  -> match on bag time (0/423 -> 78/423); (d) matcher interp threshold too strict for Jetson numpy (1e-8 ->
+  1e-4, real err 2.4e-6 deg). Also this session: the MISSION/design-philosophy written into the header
+  (place vs measurement, whole-not-rough, the barn example, Polycam anti-ref); "divergence" reframed as a
+  displaced-cluster OUTLIER problem (operator's RViz insight - 92% room + 7% clustered garbage, SOR can't
+  clear it, distance-crop UNFIT for variable film-set scale); Point-LIO odom-cutoff-at-5.5s discovered;
+  sensor-role clarified (camera=place has no depth/reach, LiDAR=measurement, far field=backdrop plate,
+  reach=move the LiDAR); RealSense D435 considered + rejected (dense but SOFT = the melt problem, and
+  <10m range < L2's 30m). CAPTURE PROCESS fully proven twice tonight with correct save-order. Debug+conflict
+  pass on today's code: all 3 files parse+import+selftest CLEAN - no code conflicts. **KEY RISK: today's
+  fixes (ball-pivoting engine, typestore+bagtime matcher) live ONLY on ~/Desktop - NOT pushed to repo; a
+  fresh wget would restore BROKEN versions. PUSH per_shot_texture.py + pointlio_pose_matcher.py to rig-files
+  before trusting the repo.** Backups on Desktop: per_shot_texture.py.bak_poisson (the ONLY Poisson copy -
+  keep for the mesher revisit), matcher .bak/.bak2/.bak3. Dead file to delete: ~/Desktop/patch_mesh.py.
+  NEXT: crack meshing quality (Poisson-on-rooms vs tuned ball-pivoting), restore engine voxel from 0.01.
