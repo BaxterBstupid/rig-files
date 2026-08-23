@@ -1,3 +1,5 @@
+
+[MASTER_REFERENCE(16).md](https://github.com/user-attachments/files/31354099/MASTER_REFERENCE.16.md)
 [MASTER_REFERENCE(13).md](https://github.com/user-attachments/files/31334830/MASTER_REFERENCE.13.md)
 [MASTER_REFERENCE(11).md](https://github.com/user-attachments/files/31325639/MASTER_REFERENCE.11.md)
 [MASTER_REFERENCE(10).md](https://github.com/user-attachments/files/31324001/MASTER_REFERENCE.10.md)
@@ -5,7 +7,7 @@
 [MASTER_REFERENCE(8).md](https://github.com/user-attachments/files/31309833/MASTER_REFERENCE.8.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
-<!-- Last touched 2026-08-22 (all-nighter): FIRST FUSION ACHIEVED end-to-end on live Point-LIO data; mission/design-philosophy added to header; mesher swapped Poisson->ball-pivoting (Poisson fatally fails on open room-scans); matcher fixed (typestore + bag-time clock); divergence reframed as displaced-cluster outliers; odom-cutoff-at-5.5s found. Image quality ~25% (mesher is the bottleneck). -->
+<!-- Last touched 2026-08-22 (dossier): STRATEGY PIVOT toward Unreal (rough-capture -> clean in Unreal on a GPU workstation/cloud-GPU; validate via cloud rental first). Point-LIO lag traced to IMU-LiDAR SYNC (README note A) - fix-path + LiDAR-only sidestep banked in 7P. -->
 Last updated: 2026-08-21 (session: Point-LIO texturing bridge BUILT + proven cold; odometry-engine fork 7N added)
 
 > This is the TOP document. Narrative history lives in PLAN_NEXT_SESSION.md (archived
@@ -1975,6 +1977,99 @@ calibration, config rework (non-native IMU topic), and time-sync wiring — and 
 (vs. init/motion technique) before spending. Filed as an avenue, not a plan.
 
 ═══════════════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════════════
+## 7P. POINT-LIO LAG / SYNC — INVESTIGATION DOSSIER (updated 2026-08-23)
+
+*** LIKELY ROOT CAUSE FOUND (2026-08-23): JETSON SYSTEM CLOCK vs UNITREE FROZEN TIMESTAMPS ***
+A user with the SAME symptom on the same hardware class (Jetson + Unitree) reported the mechanism,
+and it fits our evidence exactly:
+  - Unitree's internal board publishes sensor timestamps FROZEN around a fixed date (their Go2 showed
+    ~Sep 2025; our bag showed frozen ~Feb 2026, all-identical stamps). This is inherent to the Unitree,
+    NOT our bug.
+  - Point-LIO (and the ROS layer) enforce MONOTONICALLY-INCREASING timestamps: a message whose stamp is
+    earlier than the previous one is DROPPED. And the incoming sensor stamp must be EARLIER than system
+    time or data gets rejected / never processed.
+  - JETSONS HAVE NO RTC BATTERY -> on reboot the clock resets (toward 1970) until the network/NTP
+    corrects it. So if you capture BEFORE the clock syncs, system time is BEHIND the Unitree's frozen
+    future-stamp -> messages get rejected partway -> ODOMETRY CUTS OUT (our 5.5s cutoff) while images
+    (different clock path) keep coming. This explains BOTH the frozen stamps AND the 5.5s cutoff.
+  - VERIFY diagnostic (from the report): 
+    ros2 topic echo --once /unilidar/imu --field header.stamp.sec | head -n1 | xargs -I{} date -d @{}
+    -> shows the date the SENSOR is stamping. Compare to `date` (system clock).
+THE FIX IS TRIVIAL: ensure the Jetson clock is CORRECT (NTP/network) BEFORE capturing, or set it
+manually with `date`. As of 2026-08-23 the Jetson clock reads correctly (Aug 23 2026), AHEAD of the
+frozen Feb-2026 sensor stamp = the GOOD state. So the bug may ALREADY be self-resolved via NTP; the
+bad captures were likely taken when the clock was wrong at capture time.
+CAVEAT: the report was on a Go2 (/utlidar topics) vs our standalone L2 (/unilidar topics) - same
+Unitree timestamp behavior, adjacent product. Treat as strong-but-unverified until a fresh hot capture
+confirms the cutoff is gone. VALIDATION TEST: confirm `date` is correct -> fresh capture -> check if
+odom now publishes the FULL duration (no 5.5s cutoff). If yes, root cause CONFIRMED and captures are
+reliable going forward.
+IMPLICATION FOR OLD DATA: captures taken with a wrong clock can't have their frozen per-point stamps
+retroactively "corrected" into valid sync (the per-point time relationships were never recorded right).
+Best existing capture (192455) is still usable AS GEOMETRY (the cloud is coherent) but is not a model
+for reliable future capture. Going forward: correct-clock captures should be clean.
+
+--- earlier dossier (superseded root cause, but checklist still useful for other timestamp issues) ---
+## 7P-OLD. POINT-LIO LAG / SYNC — INVESTIGATION DOSSIER (2026-08-22, banked for later)
+═══════════════════════════════════════════════════════════════════════════
+STATUS: characterized, NOT yet fixed. Banked so it doesn't ambush us later (esp. once
+feeding Unreal, which needs reliable captures). This is the "5.5s odom cutoff / displaced
+cluster / frozen-timestamp" problem, now traced to a ROOT CAUSE with a fix-path AND a sidestep.
+
+### CONFIRMED EVIDENCE (observed, not hypothesis)
+- Odom (/aft_mapped_to_init) HEADER timestamps are FROZEN: all identical (~1787358243.694),
+  and ~53s BEFORE the recording started. (We work around this by matching on BAG time.)
+- Odom published only ~5.5s of a ~50s run, then went silent while images kept coming ~44s more.
+  The CLEAN short capture (192455) only HAD ~5.5s of odom - likely WHY it stayed coherent.
+- Odom bursts at ~3000 Hz. **This is BENIGN** - see Note E below; it's the documented effect of
+  publish_odometry_without_downsample:true, NOT part of the bug. (One fewer thing to chase.)
+- The Point-LIO PAPER proves the estimator survives 75 rad/s / 80 m/s2 / IMU saturation on drones.
+  We do STATIONARY captures. So the estimator's motion-handling is NOT the problem - it's plumbing.
+
+### ROOT CAUSE (README-confirmed direction): IMU-LiDAR SYNCHRONIZATION
+The Point-LIO README's **#1 important note (A)**: "Please make sure the IMU and LiDAR are
+Synchronized, that's important." Our frozen-timestamp evidence is exactly a sync failure signature.
+COMPOUNDED by running TWO adaptation layers removed from the original:
+  - Livox-native algorithm -> Unitree L2 fork (unitreerobotics/point_lio_unilidar, ROS1)
+  - -> ROS2 port we actually run (dfloreaa/point_lio_ros2).
+Each layer is a place timestamp handling can break. Point-LIO is fundamentally built around the
+Livox CustomMsg per-point-timestamp structure ("only livox_lidar_msg.launch produces the timestamp
+of each LiDAR point which is very important for Point-LIO").
+
+### FIX-PATH CHECKLIST (when we return to it)
+1. Grep Point-LIO logs for **"Failed to find match for field 'time'"** (README Note C). If present,
+   the L2 cloud is MISSING per-point timestamps -> Point-LIO can't process correctly. Primary check.
+2. **timestamp_unit** in unilidar_l2.yaml (0=sec,1=ms,2=us,3=ns) vs. what the L2 driver ACTUALLY emits.
+   A wrong unit = every point's time misread. LEADING single-parameter suspect - REINFORCED by README
+   5.3: for Velodyne/Ouster (spinning LiDARs w/ PointCloud2 time field - the L2's CATEGORY, not Livox
+   CustomMsg), timestamp_unit is THE documented knob to make per-point timestamps work. The L2 is a
+   spinning-style sensor, so this is very likely the exact parameter that's wrong.
+3. **time_lag_imu_to_lidar** - the LiDAR/IMU time-offset parameter. If wrong, point-by-point fusion desyncs.
+4. **satu_acc / satu_gyro / acc_norm** (README Note B + 5.2 item 6: "norm of IMU's acceleration
+   according to UNIT of acceleration messages"). Set to the L2's REAL IMU values + UNITS. Units trap:
+   if L2 reports accel in g's, acc_norm ~1; if m/s2, ~9.81 (cf. Livox built-in=1, Pixhawk=9.805). A
+   units mismatch misconfigures the whole filter scaling without an obvious crash. (Ours: satu_acc 30,
+   satu_gyro 35 - VERIFY these are the L2's actual values + correct acc_norm unit, not Livox defaults.)
+5. **DIFF our config against the official unitreerobotics/point_lio_unilidar** (ROS1) as ground-truth
+   reference for L2 timestamp handling. Also diff dfloreaa ROS2 port behavior.
+6. Search BOTH repos' Issues for "odometry stops", "timestamp", "5 seconds", "Unitree".
+CONFIRMED FROM CONFIG (2026-08-23 grep of unilidar_l2.yaml): acc_norm:9.81 CORRECT (L2 reports m/s2,
+measured gravity=9.63 confirms). satu_acc:30/satu_gyro:35 fine (IMU measured ~9.8/~0.02, nowhere near).
+timestamp_unit:0 (seconds). time_lag_imu_to_lidar:0.0. IMU SATURATION RULED OUT BY DATA (0 crossings on
+a stationary capture). These are secondary now that the CLOCK root cause (above) is the likely answer.
+CONFIRMED-OK (not the problem): lidar_type:5 + scan_line:18 MATCH the official Unitree L2 config
+(DeepWiki). extrinsic_est_en:false is correct per README Note D (extrinsic is given).
+
+### SIDESTEP (README Note F) - possibly FASTER to reliable captures than fixing sync:
+Run Point-LIO **LiDAR-ONLY**: set imu_en:false, use_imu_as_input:0, and give a good gravity_init.
+This DODGES the IMU-LiDAR sync problem ENTIRELY (no IMU = nothing to sync). Tradeoff: loses the
+aggressive-motion/saturation robustness - which we DON'T USE (stationary/gentle captures). Risk:
+LiDAR-only can struggle in geometrically degenerate scenes (long blank hallway, featureless wall)
+where the IMU normally helps. For a bounded interior with plenty of geometry, likely fine. CHEAP to
+test and could make captures reliable WITHOUT solving the sync bug. Worth trying first.
+
+═══════════════════════════════════════════════════════════════════════════
 ## 8. SESSION UPDATE LOG (append one line per session; values above stay current)
 ═══════════════════════════════════════════════════════════════════════════
 - 2026-08-17: Built framework + camera options. Found camera framerate limit (30/60/80
@@ -2193,3 +2288,38 @@ calibration, config rework (non-native IMU topic), and time-sync wiring — and 
   before trusting the repo.** Backups on Desktop: per_shot_texture.py.bak_poisson (the ONLY Poisson copy -
   keep for the mesher revisit), matcher .bak/.bak2/.bak3. Dead file to delete: ~/Desktop/patch_mesh.py.
   NEXT: crack meshing quality (Poisson-on-rooms vs tuned ball-pivoting), restore engine voxel from 0.01.
+- 2026-08-22 (strategy session): Big-picture reassessment. Operator (LiDAR since Jan, prior tools
+  LiDAX/Foxglove, moved to Jetson for compute) flagged we're ~25% to a deliverable and stuck in a
+  tooling loop (RTAB -> Point-LIO -> mesher) - optimizing INTERMEDIATE artifacts while blind to the
+  END result. DECISION/PIVOT: get to Unreal EARLY - push rough Point-LIO output into Unreal and let
+  it (plus real GPU compute) do meshing/cleanup/relight, so we can tweak the WHOLE chain while
+  watching the final output instead of polishing blind. HARD FACTS established: (1) Unreal does NOT
+  run on Jetson (Vulkan wall, well-documented dead end) nor usefully on the operator's Surfaces/HP
+  laptop (no discrete GPU). (2) Unreal has a native, first-party LiDAR Point Cloud plugin - imports
+  .las/.laz/.ply/.e57/.pts, meters->UU (1UU=1cm) so dimensions survive, dynamic LOD for big clouds;
+  aimed exactly at set designers. Point cloud != relightable mesh though; meshing/relight still a
+  step (pros often use Houdini as an intermediate on a powerful box). So Unreal RELOCATES the meshing
+  problem to better tools, doesn't erase it - capture quality still matters. (3) PLAN: Jetson stays
+  capture+Point-LIO front end; a GPU WORKSTATION (RTX, 12GB+ VRAM min, 16GB sweet spot, 32-64GB RAM;
+  ~$1.6-2k Tier-1 desktop e.g. RTX 4070 Ti Super) becomes the ingest/clean/relight/render back end.
+  VALIDATE FIRST via CLOUD GPU rental (~$1-3/hr creative workstation, Vagon or Shadow ~$55/mo) -
+  ~$20-60 total to prove the rough-capture->Unreal->deliverable path before buying the box. Cloud
+  machine = the box that runs Unreal; drive it remotely from the HP laptop (laptop is just a screen).
+  Data handoff is trivial (tiny files). Considered+rejected: RealSense D435 (dense but SOFT depth =
+  the melt problem, <10m range < L2's 30m). Sensor roles clarified: camera=PLACE (no depth/reach),
+  LiDAR=MEASUREMENT, far field (sky/mountains)=backdrop PLATE in Unreal, reach=MOVE the LiDAR. Also
+  cracked the Point-LIO lag diagnosis from mystery -> IMU-LiDAR SYNC failure (README note A), full
+  dossier in 7P with fix-path + a LiDAR-only sidestep (imu_en:false). TIMELINE (3hr/day avg, honest):
+  constrained deliverable (one lit interior) ~6-10 weeks IF we reorder to solve capture coverage +
+  registration stability first; barn-class ~4-6 months. NEXT: prep colored .ply export for Unreal
+  (cold), then cloud-GPU validation of the whole approach.
+- 2026-08-23 (clock breakthrough): IMU saturation check on 192455 bag: 0 crossings (accel max 9.83 vs
+  satu 30; gyro max 0.019 vs satu 35) -> saturation DEFINITIVELY not the lag cause; also confirmed L2
+  reports accel in m/s2 (gravity=9.63) so acc_norm:9.81 is correct. Config grep confirmed acc_norm/satu
+  values fine, timestamp_unit:0, time_lag:0.0. THEN found a matching user report: the lag/frozen-stamp/
+  cutoff is a JETSON-CLOCK vs UNITREE-FROZEN-TIMESTAMP problem (Jetsons have no RTC battery, boot with a
+  wrong clock until NTP; Point-LIO drops messages whose stamps aren't monotonic / are ahead of system
+  time -> odom cuts out). Jetson clock is currently CORRECT (ahead of the frozen Feb-2026 sensor stamp),
+  so the bug may already be self-resolved. Full detail + validation test in 7P. This likely closes the
+  months-long "divergence/lag" mystery. NEXT: a fresh hot capture with correct clock to confirm the
+  cutoff is gone - and to attempt a BETTER full-fusion image than first_fusion.png / _hq.png.
