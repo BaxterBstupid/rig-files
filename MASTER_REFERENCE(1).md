@@ -1,5 +1,4 @@
-
-[MASTER_REFERENCE(16).md](https://github.com/user-attachments/files/31354099/MASTER_REFERENCE.16.md)
+[MASTER_REFERENCE_17.md](https://github.com/user-attachments/files/31356522/MASTER_REFERENCE_17.md)
 [MASTER_REFERENCE(13).md](https://github.com/user-attachments/files/31334830/MASTER_REFERENCE.13.md)
 [MASTER_REFERENCE(11).md](https://github.com/user-attachments/files/31325639/MASTER_REFERENCE.11.md)
 [MASTER_REFERENCE(10).md](https://github.com/user-attachments/files/31324001/MASTER_REFERENCE.10.md)
@@ -464,7 +463,30 @@ When it arrives:
   5. Mobilize + walk (geometry + approximate colour)  6. Trigger camera → clean colour
 
 ═══════════════════════════════════════════════════════════════════════════
+## 7C0. RTAB METHOD — PROJECT HISTORY (SUPERSEDED by Point-LIO 2026-08-20; NOT current)
+═══════════════════════════════════════════════════════════════════════════
+COLD READER: RTAB-Map was the project's ORIGINAL odometry/SLAM method (Aug 2018-20 era).
+The project PIVOTED to Point-LIO on 2026-08-20 (see 7M: Point-LIO beat the rotation bug that
+RTAB could not — 2.87m ceiling vs RTAB's 13m collapse). Everything in the RTAB-METHOD sections
+below is retained as HISTORY / REFERENCE, NOT as a present, usable path. Do not run these
+commands or treat these statuses as current. The CURRENT odometry is Point-LIO (7M/7N).
+
+RTAB-METHOD sections (all historical, read as project history only):
+  - §3 "RTAB-Map — INSTALLED & HEALTHY" table — historical install/first-map facts.
+  - 7C. IMU integration into RTAB odometry — attempted, paused (TF issue). RTAB-specific.
+  - 7D. Camera colour integration via RTAB (Way A/B) — the colour-in-map plumbing.
+  - 7I. Capture experiment B-vs-A — run on RTAB; the sampleB geometry was RTAB-rotation-collapsed.
+  - 7J. Odometry under-tracks rotation — the RTAB failure that DROVE the Point-LIO pivot.
+  - 7K. Strategic status — "RTAB rotation is the ceiling; Point-LIO is the fix" (the pivot decision).
+STILL-POTENTIALLY-RELEVANT (don't lose): 7J's findings (split TF tree; scan-deskew under rotation;
+  sparse-L2-cloud + ICP under-constrains rotation) were about the L2 cloud + ICP and MIGHT bear on
+  Point-LIO if it ever shows rotation issues. Point-LIO currently handles rotation well (7M), so this
+  is reference, not an active concern. Files milestone_map_20260818.db + inspect_pcd.py's "RTAB 13m"
+  string are RTAB-era relics (inspect_pcd still works; its RTAB reference string is stale).
+
+═══════════════════════════════════════════════════════════════════════════
 ## 7C. IMU INTEGRATION — DETAILED STATUS (attempted 2026-08-18, PAUSED, not solved)
+>>> [RTAB METHOD — PROJECT HISTORY, superseded by Point-LIO. See 7C0. Not current.] <<<
 ═══════════════════════════════════════════════════════════════════════════
 FOR A COLD READER: this documents an attempt to add the LiDAR's built-in IMU to the
 RTAB-Map odometry, why it failed, and exactly how to fix it next time. Nothing here is
@@ -563,6 +585,7 @@ Do NOT let it block progress. Working baseline command (NO imu, proven):
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 7D. CAMERA COLOUR INTEGRATION — DETAILED STATUS (in progress, 2026-08-18)
+>>> [RTAB METHOD — PROJECT HISTORY, superseded by Point-LIO. See 7C0. Not current.] <<<
 ═══════════════════════════════════════════════════════════════════════════
 FOR A COLD READER: the LiDAR maps are geometry-only (grey). This is the work to make
 them COLOURED (needed downstream for film-set relighting). Two methods are being tried;
@@ -980,6 +1003,7 @@ must use rtab_capture_with_images.sh (v2) so images+poses are saved for texturin
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 7I. CAPTURE EXPERIMENT — B (stationary) vs A (moving), PARAMETERS + RESULTS
+>>> [RTAB METHOD — PROJECT HISTORY, superseded by Point-LIO. See 7C0. Not current.] <<<
 ═══════════════════════════════════════════════════════════════════════════
 COLD READER: this section defines a two-arm capture experiment and holds its
 results. GOAL: capture the SAME space two ways — stationary (B) and moving (A) —
@@ -1082,6 +1106,7 @@ evidence for the trigger-camera-fork decision, not just theory.
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 7J. ⚠️ ODOMETRY UNDER-TRACKS ROTATION — diagnosis (2026-08-19), NEXT: TF/deskew
+>>> [RTAB METHOD — PROJECT HISTORY, superseded by Point-LIO. See 7C0. Not current.] <<<
 ═══════════════════════════════════════════════════════════════════════════
 COLD READER: the moving/panning capture (Sample B done as a stop-and-go pan) revealed
 that RTAB's LiDAR odometry SEVERELY UNDER-MEASURES ROTATION. Physical ~90deg+ pan ->
@@ -1572,6 +1597,7 @@ CHECK (cold, on Jetson, no rig): the driver source at
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 7K. ⚠️ STRATEGIC STATUS (2026-08-20) — RTAB rotation is the ceiling; Point-LIO is the fix ⚠️
+>>> [RTAB METHOD — PROJECT HISTORY, superseded by Point-LIO. See 7C0. Not current.] <<<
 ═══════════════════════════════════════════════════════════════════════════
 COLD-READER SUMMARY OF WHERE THIS PROJECT ACTUALLY STANDS (honest, evidence-based):
 
@@ -2069,6 +2095,60 @@ LiDAR-only can struggle in geometrically degenerate scenes (long blank hallway, 
 where the IMU normally helps. For a bounded interior with plenty of geometry, likely fine. CHEAP to
 test and could make captures reliable WITHOUT solving the sync bug. Worth trying first.
 
+
+═══════════════════════════════════════════════════════════════════════════
+## 7S. RESEARCH — SOLVING THE HOLEY-MESH / DELIVERABLE PROBLEM (web search 2026-08-23)
+═══════════════════════════════════════════════════════════════════════════
+COLD READER: real sources READ (not recalled) on 2026-08-23, tied to our actual blockers.
+THE THROUGH-LINE across every serious lab: they use the CAMERA to DENSIFY THE GEOMETRY, not
+just to colour it. Our current pipeline uses camera for TEXTURE only (place) + LiDAR for
+geometry only (measurement). The research consensus for a SOLID mesh from SPARSE LiDAR is to
+fuse the camera into the GEOMETRY step (depth-completion or multi-view-stereo densification),
+THEN texture. This is the most promising direction to move OFF holey meshes. Sources:
+
+- **CMU Robotics Institute — Li et al., ICRA 2019, "Dense Surface Reconstruction from
+  Monocular Vision and LiDAR"** (https://www.ri.cmu.edu/app/uploads/2019/07/Li19icra.pdf).
+  NEARLY OUR RIG + OUR FAILURE. States LiDAR-only can't reconstruct indoors well because LiDAR
+  is sparse vs camera pixels (= our holey mesh). FIX: integrate LiDAR into a multi-view-stereo
+  pipeline for point-cloud DENSIFICATION + tetrahedralization, then graph-cut a WATERTIGHT mesh.
+  Reports it significantly beats both camera-only and LiDAR-only. THE most directly on-point source.
+
+- **Sparse-LiDAR holes are a KNOWN FRONTIER PROBLEM (nobody fully solves it)** — LGFaware-meshing,
+  2025 (tandfonline 10.1080/10095020.2025.2502481): admits ALL methods incl. theirs "fail to
+  completely reconstruct edge regions" in sparse areas. Two escape routes named: (1) deep-learning
+  DEPTH COMPLETION, (2) MULTI-VIEW-STEREO densification from images. So our holey mesh isn't
+  incompetence - it's the frontier; the exits are camera-driven densification.
+
+- **HKU-MARS Point-LIO README** (https://github.com/hku-mars/Point-LIO) — CONFIRMS our 7P sync
+  dossier verbatim: IMU-LiDAR sync critical; "Failed to find match for field 'time'" = missing
+  per-point stamps; LiDAR-only sidestep = imu_en:false + gravity_init + use_imu_as_input:0.
+- **HKU-MARS LiDAR_IMU_Init** (https://github.com/hku-mars/LiDAR_IMU_Init) — NEW LEAD for our
+  odom-cutoff / frozen-timestamp bug: notes some LiDARs' timestamp origin = power-on, so power-
+  cycling restarts stamps at 0 and temporal init is needed each power-up. Directly relevant to
+  the 7P "frozen Feb-2026 sensor stamp" finding. Worth trying as the temporal-init fix.
+
+- **Oxford Dynamic Robot Systems — SiLVR** (https://arxiv.org/html/2403.06877.pdf, updated Jan
+  2026) — CLOSEST TO OUR WHOLE DELIVERABLE: handheld LiDAR+camera -> dense textured photoreal
+  reconstruction with geometry on-par with LiDAR + photorealistic novel-view synthesis. Uses a
+  LiDAR-inertial-odometry+SLAM front end (like ours). Read how they fuse for the back half.
+
+- **Univ. of Michigan PeRL (Perceptual Robotics Lab)** (https://robots.engin.umich.edu/) — our
+  exact sensor triple (3D LiDAR + camera + IMU), co-registered LiDAR+camera for HD mapping; NCLT
+  dataset. Reference lab for the fusion; browse for methods.
+
+- **Zhen/Hu/Scherer — Joint-Optimization LiDAR-Camera Fusion** (https://arxiv.org/pdf/1907.00930)
+  — hit 2.7mm accuracy by JOINTLY solving bundle-adjustment + cloud-registration to compute camera
+  poses AND refine the extrinsic per-capture, beating fixed target-based extrinsic. We currently
+  use a FIXED vetted extrinsic; per-capture joint refinement could tighten registration.
+
+NOT YET EXPLORED (next research pass): DARPA SubT program reconstruction stacks (surfaced via
+  CMU/Michigan lineage but no direct program page read yet); deep depth-completion tooling specifics.
+IMPLICATION FOR THE PLAN: the "camera = place only" split in the mission is right for TEXTURE, but
+  the research says for a SOLID MESH we may also need the camera to help DENSIFY geometry in sparse
+  regions. This does NOT contradict the accuracy mission (densification guided by measured LiDAR is
+  not photogrammetry-guessing) - it's the documented pro path off holey meshes. FLAG for operator
+  decision, not yet adopted.
+
 ═══════════════════════════════════════════════════════════════════════════
 ## 8. SESSION UPDATE LOG (append one line per session; values above stay current)
 ═══════════════════════════════════════════════════════════════════════════
@@ -2323,3 +2403,4 @@ test and could make captures reliable WITHOUT solving the sync bug. Worth trying
   so the bug may already be self-resolved. Full detail + validation test in 7P. This likely closes the
   months-long "divergence/lag" mystery. NEXT: a fresh hot capture with correct clock to confirm the
   cutoff is gone - and to attempt a BETTER full-fusion image than first_fusion.png / _hq.png.
+- 2026-08-23 (Master 17 — leak diagnosed + hardened): Session spent mostly finding WHY progress stalled at ~25%. ROOT CAUSE identified by operator: DATA LEAK between sessions - a settled decision (trimmed Poisson = the mesher, per 7H, 92.5% coverage, decided 2026-08-19) got UN-LEARNED and re-opened as a stale gotcha ("Poisson fatally fails, use ball-pivoting"), and the assistant then RE-DERIVED the same trimmed-Poisson answer the hard way (sandbox, depth 9, 10% trim) - work that was already done. Same pattern hit the missing Unreal message, the stale RTAB content, and today's lost hot-capture data. Assistant had been PULLING THE WRONG MASTER (repo MASTER_REFERENCE(1).md, a diverged lossy branch) instead of the true head; operator supplied MASTER_REFERENCE_16_.md as the authoritative source. LESSON (hard): the conversation/compaction/repo layer is NOT durable memory; the operator-controlled Master IS. Assistant to treat the Master + operator testimony as truth over its own reconstructions. This session's edits (Master 17, built on _16_): (1) RTAB consolidated as PROJECT HISTORY (7C0 index + in-place banners, nothing moved/lost); (2) 7S RESEARCH added (real web sources read - CMU dense-surface densification is the most on-point for the holey mesh; HKU LiDAR_IMU_Init a lead for the odom-cutoff; Oxford SiLVR closest to the whole deliverable). UNRESOLVED + FLAGGED (operator to decide, assistant will NOT silently fix): the mesher contradiction inside the Master (7H says trimmed-Poisson-92.5% DONE; the §6 gotcha + old NEXT-SESSION block say "Poisson fails, ball-pivoting" - these contradict; 7H is the correct one). NEXT (operator's stated plan): upload images to cloud + view in Unreal; connect camera+lidar for an image; continue research (DARPA/MIT/Michigan/HKU).
