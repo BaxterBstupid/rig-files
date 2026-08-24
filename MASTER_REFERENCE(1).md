@@ -1,4 +1,4 @@
-[MASTER_REFERENCE_17.md](https://github.com/user-attachments/files/31356522/MASTER_REFERENCE_17.md)
+[MASTER_REFERENCE_18.md](https://github.com/user-attachments/files/31356736/MASTER_REFERENCE_18.md)
 [MASTER_REFERENCE(13).md](https://github.com/user-attachments/files/31334830/MASTER_REFERENCE.13.md)
 [MASTER_REFERENCE(11).md](https://github.com/user-attachments/files/31325639/MASTER_REFERENCE.11.md)
 [MASTER_REFERENCE(10).md](https://github.com/user-attachments/files/31324001/MASTER_REFERENCE.10.md)
@@ -6,7 +6,7 @@
 [MASTER_REFERENCE(8).md](https://github.com/user-attachments/files/31309833/MASTER_REFERENCE.8.md)
 # MASTER REFERENCE — LiDAR-Camera Capture Rig
 ### THE authoritative lookup. Scan, don't read. Update values IN PLACE at session end.
-<!-- Last touched 2026-08-22 (dossier): STRATEGY PIVOT toward Unreal (rough-capture -> clean in Unreal on a GPU workstation/cloud-GPU; validate via cloud rental first). Point-LIO lag traced to IMU-LiDAR SYNC (README note A) - fix-path + LiDAR-only sidestep banked in 7P. -->
+<!-- Last touched 2026-08-23 (Master 18): DASHBOARD updated for the Point-LIO pivot (RTAB rows tagged [HISTORY], Point-LIO rows ADDED). MESHER CONTRADICTION RESOLVED: trimmed Poisson (depth 9, ~5% trim) IS the mesher per 7H/92.5%; the stale "Poisson fatally fails -> ball-pivoting" gotcha was a REGRESSION, corrected in place. Trimmed-Poisson depth 9 needs >8GB RAM (segfaults on Jetson, runs on a workstation) -> meshing belongs on the processing station. -->
 Last updated: 2026-08-21 (session: Point-LIO texturing bridge BUILT + proven cold; odometry-engine fork 7N added)
 
 > This is the TOP document. Narrative history lives in PLAN_NEXT_SESSION.md (archived
@@ -327,13 +327,22 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
 
 ═══════════════════════════════════════════════════════════════════════════
 ## 6. GOTCHAS & LANDMINES
-- **POISSON MESHING FATALLY FAILS ON ROOM-SCANS (2026-08-22)**: create_from_point_cloud_poisson
-  aborts with "Failed to close loop" on open interior scans (it wants a CLOSED/watertight volume; a
-  room scanned from inside is an OPEN surface). Not catchable as a Python exception - it kills the
-  process. Engine mesh_cloud was swapped to BALL-PIVOTING (works on open surfaces, only meshes where
-  points exist = honest to measurement, no invented geometry). Tradeoff: ball-pivoting leaves HOLES
-  (speckle @ voxel 0.02; regular "knitted" WEAVE @ 0.01 when radii don't match density). Quality fork
-  unresolved - Poisson gives solid surfaces (probe used it) but crashes; ball-pivoting runs but is holey.
+- **MESHER = TRIMMED POISSON (RESOLVED 2026-08-23; corrects a 2026-08-22 regression)**: The mesher
+  is TRIMMED POISSON (depth 9, ~5% low-density trim) - proven 2026-08-19 at 92.5% photoreal coverage
+  (see 7H, evidence texture_probe_poisson.png). Ball-pivoting is REJECTED for texture (too holey:
+  non-uniform L2 point spacing, ~10.9x variation, defeats fixed-radius ball-pivoting -> speckle/weave).
+  *** CORRECTION: a 2026-08-22 session wrongly concluded "Poisson FATALLY FAILS on room-scans, swap to
+  ball-pivoting" after Poisson threw "Failed to close loop" / segfaulted on the Jetson. That was a
+  REGRESSION - it lost the settled 7H result and cost ~two sessions re-deriving it. The real cause of
+  the crash was NOT that Poisson can't mesh rooms: it was the 8GB JETSON RUNNING OUT OF RAM. Verified
+  2026-08-23: on a machine with more RAM, Poisson completes cleanly at depth 8/9/10 and produces the
+  solid deliverable-grade surface. ***
+  CONSEQUENCE (important, drives the architecture): depth-9 Poisson NEEDS MORE RAM THAN THE 8GB JETSON
+  HAS. So the deliverable mesher CANNOT run on the Jetson -> meshing/texturing belong on the PROCESSING
+  STATION (workstation or cloud-GPU; see 7Q/7F). The Jetson is capture front-end only. This is concrete
+  evidence FOR the processing-station pivot. (Honest nuance from 7E: trimmed Poisson interpolates SMALL
+  gaps on measured surfaces = fair reconstruction, and the density-trim cuts the far/invented
+  extrapolation = stays honest to the accuracy mission. Ball-pivoting's honesty isn't worth its holes.)
 - **ROSBAGS 0.11.5 NEEDS A TYPESTORE (2026-08-22)**: AnyReader([Path(bag)]) now raises "Bag contains
   no type definitions." Fix (applied to matcher, BOTH read loops): get_typestore(Stores.ROS2_HUMBLE)
   and pass default_typestore=_ts. Humble bags don't embed type defs.
@@ -405,11 +414,16 @@ Flow: deliver to outputs → drag-drop to repo via github.com → on Jetson:
 | Extrinsic | ✅ DONE, visually verified (R 85.5°, \|t\|0.169m) |
 | Fusion node (static) | ✅ live-verified (colour on geometry) |
 | Temporal (tau) | ⏳ BLOCKED on clean capture (rough ~175ms known) |
-| RTAB-Map install | ✅ DONE + healthy (surprise) |
-| RTAB-Map first map | ✅ DONE 2026-08-18: LiDAR-only SLAM, map built+saved (milestone_map_20260818.db, 5.1MB, 387+ nodes). Quality HIGH (16mm precision). |
-| RTAB-Map IMU odometry | ⏸ ATTEMPTED, PAUSED (missing static TF, see 7C). Not needed — LiDAR-only excellent. |
-| RTAB-Map colour (Way A) | ✅ WORKS: v3 deployed+verified, colour survives full pipeline into map (proven via DB). Sparse 'dots' quality only - preview, not usable. See 7D. |
-| RTAB-Map colour (Way B) | ⏸ NOT NEEDED for now: Way A proved colour-in-map works. Way B (camera_info+TF) reserved for texture/mesh path. See 7D/7F. |
+| RTAB-Map install | [HISTORY — RTAB superseded by Point-LIO, see 7C0] ✅ DONE + healthy |
+| RTAB-Map first map | [HISTORY — see 7C0] ✅ DONE 2026-08-18: LiDAR-only SLAM (milestone_map_20260818.db, 387+ nodes, 16mm). RTAB-era; Point-LIO is now the odometry. |
+| RTAB-Map IMU odometry | [HISTORY — see 7C0] ⏸ attempted/paused (TF issue). Moot — on Point-LIO now. |
+| RTAB-Map colour (Way A) | [HISTORY — see 7C0] ✅ colour survived into RTAB map (sparse dots, preview only). Superseded by per-shot TEXTURE path. See 7D. |
+| RTAB-Map colour (Way B) | [HISTORY — see 7C0] ⏸ not pursued; per-shot texture is the colour path now. See 7D/7F. |
+| **Point-LIO odometry (CURRENT)** | ✅ PROVEN 2026-08-20 (7M): built on Jetson, beat the rotation bug RTAB couldn't (2.87m ceiling vs RTAB 13m collapse), 3.38M-pt coherent room. THE current SLAM/odometry. |
+| **Point-LIO texturing bridge (CURRENT)** | ✅ BUILT+PROVEN (7M): pointlio_pose_matcher.py + pointlio_to_texture.py (multi-view per-face baker). Replaces the RTAB db_to_texture path. |
+| **FIRST FUSION on live Point-LIO** | ✅ DONE 2026-08-22: full chain capture->matcher->mesh->texture->image on live data. Quality ~25% at the time (wrong mesher used); see mesher row. |
+| **MESHER = trimmed Poisson (RESOLVED)** | ✅ trimmed Poisson depth 9, ~5% trim = 92.5% photoreal (7H). Ball-pivoting REJECTED (too holey). CATCH: depth-9 needs >8GB RAM -> segfaults on Jetson, runs on a workstation -> meshing goes on the PROCESSING STATION. |
+| Processing station (mesh/UE/relight) | ⬜ NEXT: stand up (or cloud-GPU validate) - the deliverable mesher + Unreal can't run on the Jetson. See 7Q/7F. |
 | PIPELINE ENDPOINT decided | ✅ Photoreal relightable TEXTURED MESH (#3: mesh-for-light + points-for-truth). See 7E. |
 | VFX pipeline + software mapped | ✅ 6-stage pro pipeline + tools (RealityScan/Agisoft De-Lighter/Blender). See 7F. |
 | ⚠️ FORK: Mesh(A) vs Splat(B) | CHOSE MESH (Plan A). Flagged returnable decision in 7G. If mesh fails -> return to 7G for Plan B (Gaussian Splatting), held in reserve. |
