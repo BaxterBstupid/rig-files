@@ -28,11 +28,16 @@ import sys, os, time, shutil, argparse, threading
 from collections import deque
 
 # ---- expected nominal rates (Hz) — the hardware constants ----
+# ── NOMINAL RATES: MEASURED on the real rig 2026-08-27 via `ros2 topic hz` ──
+#   LiDAR  12.0Hz  (rock steady, ~0 jitter)
+#   Camera ~14Hz   (VARIABLE 10-15Hz, heavy jitter — frames up to ~400ms apart is NORMAL)
+#   IMU    251Hz   (rock steady)
+#   Odom   ~100Hz  (ONLY publishes while Point-LIO is running — expect red bar otherwise)
 STREAMS = {
-    "LiDAR ":  {"topic":"/unilidar/cloud", "hz":12.0,  "type":"PointCloud2"},
-    "Camera":  {"topic":"/image_raw",      "hz":15.0,  "type":"Image"},
-    "IMU   ":  {"topic":"/unilidar/imu",   "hz":250.0, "type":"Imu"},
-    "Odom  ":  {"topic":"/aft_mapped_to_init","hz":100.0,"type":"Odometry"},
+    "LiDAR ":  {"topic":"/unilidar/cloud",    "hz":12.0,  "type":"PointCloud2"},
+    "Camera":  {"topic":"/image_raw",         "hz":14.0,  "type":"Image"},
+    "IMU   ":  {"topic":"/unilidar/imu",      "hz":251.0, "type":"Imu"},
+    "Odom  ":  {"topic":"/aft_mapped_to_init","hz":100.0, "type":"Odometry"},
 }
 WINDOW = 2.0          # seconds of rate-averaging
 DROP_FRAC = 0.35      # below this fraction of nominal rate for a stream = DROPPED alarm
