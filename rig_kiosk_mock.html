@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1024, height=600, initial-scale=1, user-scalable=no">
+<title>Rig Field Control</title>
+<style>
+  /* ============================================================
+     RIG FIELD KIOSK — sized for Waveshare 1024x600, 7 inch
+     A visual/touch MOCK: buttons don't fire real scripts yet.
+     Press F11 in the browser for true fullscreen (kiosk feel).
+     Purpose: judge legibility + touch-target size on the real screen.
+     ============================================================ */
+
+  :root{
+    --bg:#0d1013;            /* near-black, low glare in a dark barn, easy on eyes */
+    --panel:#161b21;
+    --edge:#232b34;
+    --ink:#eef2f4;           /* high-contrast text */
+    --dim:#8a97a3;
+    --green:#3ad17a;
+    --amber:#f5c542;
+    --red:#ff5a52;
+    --blue:#4aa8ff;
+    --font: "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
+    --mono: "DejaVu Sans Mono", "Liberation Mono", monospace;
+  }
+
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:1024px; height:600px; overflow:hidden;
+    background:var(--bg); color:var(--ink);
+    font-family:var(--font);
+    -webkit-user-select:none; user-select:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  .screen{ width:1024px; height:600px; display:flex; flex-direction:column; padding:14px; gap:12px; }
+
+  /* ---- STATUS BAR: the "are we rolling?" line, unmistakable ---- */
+  .status{
+    height:92px; border-radius:14px; display:flex; align-items:center; padding:0 26px; gap:22px;
+    border:2px solid var(--edge); background:var(--panel); transition:all .2s;
+  }
+  .status .dot{ width:30px; height:30px; border-radius:50%; flex:none; }
+  .status .label{ font-size:44px; font-weight:800; letter-spacing:.5px; }
+  .status .clock{ margin-left:auto; font-family:var(--mono); font-size:34px; color:var(--dim); }
+
+  /* status states */
+  .st-off   .dot{ background:var(--dim); }
+  .st-on    .dot{ background:var(--green); box-shadow:0 0 18px var(--green); }
+  .st-cap   { border-color:var(--red); background:#241416; }
+  .st-cap   .dot{ background:var(--red); box-shadow:0 0 22px var(--red); animation:pulse 1s infinite; }
+  .st-cap   .label{ color:var(--red); }
+  @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  /* ---- MAIN: buttons left, monitor bars right ---- */
+  .main{ flex:1; display:flex; gap:12px; min-height:0; }
+
+  .buttons{ width:340px; display:flex; flex-direction:column; gap:12px; }
+  .btn{
+    flex:1; border-radius:14px; border:2px solid var(--edge); background:var(--panel);
+    color:var(--ink); font-size:30px; font-weight:700; letter-spacing:.5px;
+    display:flex; align-items:center; justify-content:center; gap:14px;
+    cursor:pointer; transition:transform .05s, background .15s;
+  }
+  .btn:active{ transform:scale(.97); }
+  .btn .ic{ font-size:34px; }
+  .btn-start{ border-color:#1f5c3a; } .btn-start:active{ background:#12301f; }
+  .btn-stop { border-color:#5c2a2a; } .btn-stop:active { background:#301414; }
+  .btn-cap  { border-color:#264a6b; font-size:26px; } .btn-cap:active{ background:#12283d; }
+  .btn small{ display:block; font-size:15px; font-weight:500; color:var(--dim); margin-top:4px; }
+
+  /* ---- MONITOR PANEL: flow + card + heat bars ---- */
+  .monitor{ flex:1; background:var(--panel); border:2px solid var(--edge); border-radius:14px;
+            padding:14px 16px; display:flex; flex-direction:column; gap:9px; }
+  .mrow{ display:flex; align-items:center; gap:12px; height:34px; }
+  .mrow .name{ width:70px; font-size:18px; font-weight:600; color:var(--dim); }
+  .bar{ flex:1; height:22px; border-radius:6px; background:#0b0e11; overflow:hidden; position:relative; }
+  .fill{ height:100%; border-radius:6px; transition:width .4s; }
+  .val{ width:118px; text-align:right; font-family:var(--mono); font-size:17px; }
+  .divider{ height:1px; background:var(--edge); margin:3px 0; }
+  .g{ background:var(--green);} .a{ background:var(--amber);} .r{ background:var(--red);} .b{ background:var(--blue);}
+  .tg{ color:var(--green);} .ta{ color:var(--amber);} .tr{ color:var(--red);} .tdim{color:var(--dim);}
+
+  .hint{ position:fixed; bottom:4px; right:8px; font-size:11px; color:#3a4650; }
+</style>
+</head>
+<body>
+<div class="screen">
+
+  <!-- STATUS — toggle the class on .status to preview states: st-off / st-on / st-cap -->
+  <div class="status st-cap" id="status">
+    <div class="dot"></div>
+    <div class="label" id="statusLabel">CAPTURING</div>
+    <div class="clock" id="clock">02:14</div>
+  </div>
+
+  <div class="main">
+    <!-- BUTTONS -->
+    <div class="buttons">
+      <div class="btn btn-start" onclick="setState('on')">
+        <span class="ic">▶</span><div>START RIG</div>
+      </div>
+      <div class="btn btn-stop" onclick="setState('off')">
+        <span class="ic">■</span><div>STOP RIG</div>
+      </div>
+      <div class="btn btn-cap" onclick="toggleCap()">
+        <span class="ic">●</span><div>START / STOP CAPTURE<small>records lean — no RViz</small></div>
+      </div>
+    </div>
+
+    <!-- MONITOR BARS -->
+    <div class="monitor">
+      <div class="mrow"><div class="name">LiDAR</div><div class="bar"><div class="fill g" style="width:100%"></div></div><div class="val tg">12.0 Hz</div></div>
+      <div class="mrow"><div class="name">Camera</div><div class="bar"><div class="fill g" style="width:96%"></div></div><div class="val tg">29 Hz</div></div>
+      <div class="mrow"><div class="name">IMU</div><div class="bar"><div class="fill g" style="width:100%"></div></div><div class="val tg">251 Hz</div></div>
+      <div class="mrow"><div class="name">Odom</div><div class="bar"><div class="fill b" style="width:98%"></div></div><div class="val" style="color:var(--blue)">100 Hz</div></div>
+      <div class="divider"></div>
+      <div class="mrow"><div class="name">Card</div><div class="bar"><div class="fill g" style="width:62%"></div></div><div class="val tg">18m left</div></div>
+      <div class="divider"></div>
+      <div class="mrow"><div class="name">Jetson</div><div class="bar"><div class="fill a" style="width:72%"></div></div><div class="val ta">61 °C</div></div>
+      <div class="mrow"><div class="name">L2</div><div class="bar"><div class="fill g" style="width:45%"></div></div><div class="val tg">38 °C</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="hint">MOCK — F11 for fullscreen · tap buttons to preview status states</div>
+
+<script>
+  // Mock interactivity: only previews the STATUS states so you can see them on the screen.
+  const statusEl=document.getElementById('status');
+  const labelEl=document.getElementById('statusLabel');
+  let capturing=false;
+  function setState(s){
+    capturing=false;
+    statusEl.className='status '+(s==='on'?'st-on':'st-off');
+    labelEl.textContent = s==='on' ? 'RIG ON' : 'RIG OFF';
+  }
+  function toggleCap(){
+    capturing=!capturing;
+    if(capturing){ statusEl.className='status st-cap'; labelEl.textContent='CAPTURING'; }
+    else { statusEl.className='status st-on'; labelEl.textContent='RIG ON'; }
+  }
+  // live clock in the status bar
+  let t=134;
+  setInterval(()=>{ if(document.getElementById('status').classList.contains('st-cap')){
+    t++; const m=String(Math.floor(t/60)).padStart(2,'0'), s=String(t%60).padStart(2,'0');
+    document.getElementById('clock').textContent=m+':'+s;
+  }},1000);
+</script>
+</body>
+</html>
