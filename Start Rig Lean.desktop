@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Start Rig (Lean)
+Comment=Start rig WITHOUT fusion nodes - full-rate camera (~28Hz)
+Exec=gnome-terminal -- bash -c "/home/fasterbybaxter/rig_start_lean.sh"
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
