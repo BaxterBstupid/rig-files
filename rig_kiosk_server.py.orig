@@ -32,8 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SCRIPTS = {
     "start":   os.path.expanduser("~/rig_start.sh"),
     "stop":    os.path.expanduser("~/rig_stop.sh"),
-    "capture":    os.path.expanduser("~/point_lio_capture.sh"),
-    "start_lean": os.path.expanduser("~/rig_start_lean.sh"),
+    "capture": os.path.expanduser("~/point_lio_capture.sh"),
 }
 RECORD_PATH = os.environ.get("RECORD_PATH", os.path.expanduser("~/Desktop"))
 
@@ -46,15 +45,6 @@ STREAMS = {
 }
 L2_TEMP_TOPIC = "/unilidar/apd_temperature"   # now published by our driver mod
 TEMP_GREEN, TEMP_YELLOW = 68.0, 80.0          # recalibrated to the 59-63C baseline
-
-# per-device thermal gauge specs (real trip points; Jetson color = conservative 68/80 bands,
-# real kernel trips 68/70/99 shown as ticks. L2 = manual 85 ceiling, prevention line 78.)
-THERMAL = {
-    "jetson": {"floor": 35.0, "ceiling": 104.5, "green": 68.0, "yellow": 80.0,
-               "ticks": [{"at": 68, "kind": "watch"}, {"at": 70, "kind": "throttle"}, {"at": 99, "kind": "hard"}]},
-    "l2":     {"floor": 30.0, "ceiling": 85.0,  "green": 70.0, "yellow": 78.0,
-               "ticks": [{"at": 70, "kind": "watch"}, {"at": 78, "kind": "cool"}]},
-}
 
 # ============================================================
 # DATA SOURCE — real ROS2 on the Jetson, or mock in sandbox/PC
@@ -159,16 +149,6 @@ def ros_reader():
         if t < TEMP_YELLOW: return "watch"
         return "hot"
 
-    def gauge(t, spec):
-        if t is None:
-            return {"temp": None, "frac": 0, "state": "na", "ticks": spec["ticks"],
-                    "floor": spec["floor"], "ceiling": spec["ceiling"]}
-        frac = (t - spec["floor"]) / (spec["ceiling"] - spec["floor"])
-        frac = max(0.0, min(1.0, frac))
-        state = "ok" if t < spec["green"] else ("watch" if t < spec["yellow"] else "hot")
-        return {"temp": round(t, 1), "frac": round(frac, 3), "state": state,
-                "ticks": spec["ticks"], "floor": spec["floor"], "ceiling": spec["ceiling"]}
-
     while rclpy.ok():
         now = time.time()
         capturing = rate("odom", now) > STREAMS["odom"]["hz"] * 0.35
@@ -187,8 +167,9 @@ def ros_reader():
         except Exception:
             d["card"] = {"gb_free": None, "secs_left": None, "state": "na"}
         jt = jetson_temp()
-        d["jetson"] = gauge(jt, THERMAL["jetson"])
-        d["l2"]     = gauge(l2_temp["v"], THERMAL["l2"])
+        d["jetson"] = {"temp": round(jt,1) if jt else None, "state": band(jt)}
+        d["l2"]     = {"temp": round(l2_temp["v"],1) if l2_temp["v"] is not None else None,
+                       "state": band(l2_temp["v"])}
         d["capturing"] = capturing
         d["rig_on"] = any(ever[k] for k in ("lidar","camera","imu"))
         with STATE["lock"]:
