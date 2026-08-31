@@ -16,15 +16,15 @@
     font-family:var(--font); -webkit-user-select:none; user-select:none; -webkit-tap-highlight-color:transparent; }
   #fit{ position:fixed; inset:0; overflow:hidden; background:var(--bg); }
   .screen{ width:1024px; height:600px; transform-origin:top left; position:absolute; top:0; left:0;
-    display:flex; flex-direction:column; padding:16px; gap:14px; }
+    display:flex; flex-direction:column; padding:14px; gap:12px; }
 
-  .status{ height:90px; border-radius:14px; display:flex; align-items:center; padding:0 18px 0 28px; gap:22px;
+  .status{ height:78px; border-radius:14px; display:flex; align-items:center; padding:0 16px 0 24px; gap:18px;
     border:2px solid var(--edge); background:var(--panel); transition:all .2s; }
-  .status .dot{ width:30px; height:30px; border-radius:50%; flex:none; }
-  .status .label{ font-size:44px; font-weight:800; letter-spacing:.5px; }
-  .status .clock{ margin-left:auto; font-family:var(--mono); font-size:34px; color:var(--dim); }
-  .status .exit{ width:62px; height:62px; flex:none; border-radius:12px; border:2px solid #3a2530;
-    background:#1c1418; color:#c98; font-size:34px; font-weight:700; line-height:1;
+  .status .dot{ width:26px; height:26px; border-radius:50%; flex:none; }
+  .status .label{ font-size:38px; font-weight:800; letter-spacing:.5px; }
+  .status .clock{ margin-left:auto; font-family:var(--mono); font-size:30px; color:var(--dim); }
+  .status .exit{ width:54px; height:54px; flex:none; border-radius:12px; border:2px solid #3a2530;
+    background:#1c1418; color:#c98; font-size:30px; font-weight:700; line-height:1;
     display:flex; align-items:center; justify-content:center; cursor:pointer; }
   .status .exit:active{ background:#2a1a20; }
   .st-off .dot{ background:var(--dim); }
@@ -35,49 +35,59 @@
   .st-cap .label{ color:var(--red); }
   @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.35} }
 
-  .main{ flex:1; display:flex; gap:14px; min-height:0; }
+  .main{ flex:1; display:flex; gap:12px; min-height:0; }
+  .left{ width:560px; display:flex; flex-direction:column; gap:10px; min-height:0; }
 
-  .buttons{ width:512px; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:14px; }
-  .btn{ border-radius:16px; border:2px solid var(--edge); background:var(--panel); color:var(--ink);
-    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:8px;
+  /* compact row of 4 tappable buttons */
+  .buttons{ height:96px; display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:10px; }
+  .btn{ border-radius:12px; border:2px solid var(--edge); background:var(--panel); color:var(--ink);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px;
     cursor:pointer; transition:transform .05s, background .15s; }
-  .btn:active{ transform:scale(.97); }
-  .btn .ic{ font-size:54px; line-height:1; }
-  .btn .lab{ font-size:34px; font-weight:800; letter-spacing:.5px; }
-  .btn small{ font-size:17px; font-weight:500; color:var(--dim); }
+  .btn:active{ transform:scale(.96); }
+  .btn .ic{ font-size:30px; line-height:1; }
+  .btn .lab{ font-size:17px; font-weight:800; letter-spacing:.3px; text-align:center; line-height:1.05; }
   .btn-start{ border-color:#1f5c3a; } .btn-start:active{ background:#12301f; } .btn-start .ic{ color:var(--green);} .btn-start .lab{color:#d9ffe9;}
   .btn-lean { border-color:#1c6076; } .btn-lean:active { background:#0e2f3a; } .btn-lean .ic{ color:var(--teal);}  .btn-lean .lab{color:#e2fbff;}
   .btn-cap  { border-color:#7a5c14; } .btn-cap:active  { background:#3a2c0c; } .btn-cap .ic{ color:var(--amber);} .btn-cap .lab{color:#fff4df;}
   .btn-stop { border-color:#5c2a2a; } .btn-stop:active { background:#301414; } .btn-stop .ic{ color:var(--red);}   .btn-stop .lab{color:#ffe6e6;}
 
-  .monitor{ flex:1; background:var(--panel); border:2px solid var(--edge); border-radius:16px;
-    padding:14px 18px; display:flex; flex-direction:column; justify-content:space-between; }
-  .grp{ display:flex; flex-direction:column; gap:8px; }
-  .sect{ font-size:15px; letter-spacing:.06em; color:var(--dim); margin-bottom:2px; }
-  .mrow{ display:flex; align-items:center; gap:12px; height:38px; }
-  .mrow .name{ width:78px; font-size:19px; font-weight:600; color:var(--dim); }
-  .bar{ flex:1; height:26px; border-radius:7px; background:#0b0e11; overflow:hidden; position:relative; }
-  .fill{ height:100%; border-radius:7px; transition:width .4s; }
-  .val{ width:130px; text-align:right; font-family:var(--mono); font-size:19px; }
+  /* CAMERA FEED — the coverage reference, gets the space */
+  .camwrap{ flex:1; min-height:0; border-radius:12px; border:2px solid var(--edge); background:#07090b;
+    position:relative; overflow:hidden; display:flex; align-items:center; justify-content:center; }
+  .camwrap img{ width:100%; height:100%; object-fit:contain; display:none; }
+  .camph{ display:flex; flex-direction:column; align-items:center; gap:8px; color:#3a4650; }
+  .camph .big{ font-family:var(--mono); font-size:30px; letter-spacing:2px; }
+  .camph .sm{ font-size:14px; }
+  .camlabel{ position:absolute; top:8px; left:12px; font-size:12px; letter-spacing:.06em; color:#6b7680;
+    background:rgba(7,9,11,.7); padding:3px 8px; border-radius:6px; }
+
+  .monitor{ flex:1; background:var(--panel); border:2px solid var(--edge); border-radius:14px;
+    padding:12px 14px; display:flex; flex-direction:column; justify-content:space-between; }
+  .grp{ display:flex; flex-direction:column; gap:6px; }
+  .sect{ font-size:12px; letter-spacing:.06em; color:var(--dim); }
+  .mrow{ display:flex; align-items:center; gap:10px; height:32px; }
+  .mrow .name{ width:70px; font-size:16px; font-weight:600; color:var(--dim); }
+  .bar{ flex:1; height:22px; border-radius:6px; background:#0b0e11; overflow:hidden; position:relative; }
+  .fill{ height:100%; border-radius:6px; transition:width .4s; }
+  .val{ width:104px; text-align:right; font-family:var(--mono); font-size:16px; }
   .g{ background:var(--green);} .a{ background:var(--amber);} .r{ background:var(--red);} .b{ background:var(--blue);}
   .tg{ color:var(--green);} .ta{ color:var(--amber);} .tr{ color:var(--red);} .tdim{color:var(--dim);}
-
   .gbar{ overflow:visible; }
   .tick{ position:absolute; top:-3px; bottom:-3px; width:2px; }
   .tick-watch{ background:var(--amber);} .tick-throttle{ background:#e0902a;}
   .tick-hard{ background:var(--red);} .tick-cool{ background:var(--red);}
-  .scale{ position:relative; height:16px; margin:0 0 2px 90px; font-family:var(--mono); font-size:12px; color:#6b7680; }
+  .scale{ position:relative; height:14px; margin:0 0 2px 80px; font-family:var(--mono); font-size:11px; color:#6b7680; }
   .scale span{ position:absolute; transform:translateX(-50%); }
   .scale .lo{ left:0; transform:none;} .scale .hi{ right:0; left:auto; transform:none;}
 
   .overlay{ position:absolute; inset:0; background:rgba(0,0,0,.72); display:none;
     align-items:center; justify-content:center; z-index:50; }
   .overlay.show{ display:flex; }
-  .dialog{ width:600px; background:var(--panel); border:2px solid var(--edge); border-radius:18px; padding:38px; text-align:center; }
-  .dialog .q{ font-size:38px; font-weight:800; margin-bottom:10px; }
-  .dialog .sub{ font-size:19px; color:var(--dim); margin-bottom:30px; }
-  .dialog .row{ display:flex; gap:18px; }
-  .dialog .d-btn{ flex:1; height:104px; border-radius:14px; font-size:30px; font-weight:800;
+  .dialog{ width:560px; background:var(--panel); border:2px solid var(--edge); border-radius:18px; padding:34px; text-align:center; }
+  .dialog .q{ font-size:34px; font-weight:800; margin-bottom:8px; }
+  .dialog .sub{ font-size:17px; color:var(--dim); margin-bottom:26px; }
+  .dialog .row{ display:flex; gap:16px; }
+  .dialog .d-btn{ flex:1; height:96px; border-radius:14px; font-size:28px; font-weight:800;
     display:flex; align-items:center; justify-content:center; cursor:pointer; border:2px solid var(--edge); }
   .d-exit{ border-color:#5c2a2a; color:#ffb3b0; background:#241416; } .d-exit:active{ background:#341a1c; }
   .d-cancel{ border-color:#1f5c3a; color:#bff5d6; background:#12301f; } .d-cancel:active{ background:#173d28; }
@@ -95,11 +105,18 @@
   </div>
 
   <div class="main">
-    <div class="buttons">
-      <div class="btn btn-start" onclick="fire('start')"><span class="ic">&#9654;</span><span class="lab">START RIG</span><small>full &middot; overlay</small></div>
-      <div class="btn btn-lean" onclick="fire('start_lean')"><span class="ic">&#9889;</span><span class="lab">START LEAN</span><small>capture-prep</small></div>
-      <div class="btn btn-cap" onclick="fire('capture')"><span class="ic">&#9679;</span><span class="lab">CAPTURE</span><small>Point-LIO</small></div>
-      <div class="btn btn-stop" onclick="fire('stop')"><span class="ic">&#9632;</span><span class="lab">STOP RIG</span><small>kill all</small></div>
+    <div class="left">
+      <div class="buttons">
+        <div class="btn btn-start" onclick="fire('start')"><span class="ic">&#9654;</span><span class="lab">START<br>RIG</span></div>
+        <div class="btn btn-lean" onclick="fire('start_lean')"><span class="ic">&#9889;</span><span class="lab">START<br>LEAN</span></div>
+        <div class="btn btn-cap" onclick="fire('capture')"><span class="ic">&#9679;</span><span class="lab">CAPTURE</span></div>
+        <div class="btn btn-stop" onclick="fire('stop')"><span class="ic">&#9632;</span><span class="lab">STOP<br>RIG</span></div>
+      </div>
+      <div class="camwrap">
+        <div class="camlabel">CAMERA &middot; coverage reference</div>
+        <img id="camfeed" alt="camera">
+        <div class="camph" id="camph"><div class="big">NO FEED</div><div class="sm">start the rig to see the camera</div></div>
+      </div>
     </div>
 
     <div class="monitor">
@@ -139,11 +156,8 @@
 </div>
 
 <script>
-  // fill the window: scale the 1024x600 canvas to the actual viewport on both axes
-  function fit(){
-    const c=document.getElementById('canvas');
-    c.style.transform='scale('+(window.innerWidth/1024)+','+(window.innerHeight/600)+')';
-  }
+  function fit(){ document.getElementById('canvas').style.transform=
+    'scale('+(window.innerWidth/1024)+','+(window.innerHeight/600)+')'; }
   window.addEventListener('resize',fit); fit();
 
   const $ = s => document.querySelector(s);
@@ -197,9 +211,18 @@
   async function fire(which){ try{ const r=await (await fetch('/action?do='+which)).json();
     console.log('action',which,r);}catch(e){ console.log('fail',e);} }
 
+  // CAMERA FEED — poll /camera.jpg ~8fps; show placeholder when no frame (rig off)
+  const cam=$('#camfeed'), camph=$('#camph');
+  cam.onload=()=>{ cam.style.display='block'; camph.style.display='none'; };
+  cam.onerror=()=>{ cam.style.display='none'; camph.style.display='flex'; };
+  setInterval(()=>{ cam.src='/camera.jpg?t='+Date.now(); }, 125);
+
   $('#exitBtn').addEventListener('click', ()=> $('#overlay').classList.add('show'));
   $('#cancelBtn').addEventListener('click', ()=> $('#overlay').classList.remove('show'));
-  $('#doExitBtn').addEventListener('click', ()=>{ window.close(); setTimeout(()=>{ try{ window.open('','_self'); window.close(); }catch(e){} }, 100); });
+  $('#doExitBtn').addEventListener('click', async ()=>{
+    try{ await fetch('/action?do=exit_kiosk'); }catch(e){}
+    try{ window.close(); }catch(e){}
+  });
 </script>
 </body>
 </html>
