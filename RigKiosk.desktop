@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=RIG KIOSK
+Comment=Launch the fullscreen rig control kiosk
+Exec=/home/fasterbybaxter/rig_kiosk_launch.sh
+Icon=/home/fasterbybaxter/.local/share/icons/rig_icon.png
+Terminal=false
+Categories=Utility;
