@@ -199,6 +199,24 @@ def ros_reader():
 # BUTTON ACTIONS — fire the REAL scripts
 # ============================================================
 def run_script(which):
+    # exit_kiosk: close the fullscreen kiosk by ending the kiosk Firefox process directly.
+    # (Firefox blocks window.close() on pages reached by navigation, so the page can't close itself.)
+    if which == "exit_kiosk":
+        if USE_MOCK:
+            return {"ok": True, "msg": "[MOCK] would close kiosk firefox"}
+        # kill ONLY the kiosk's own Firefox (its PID was recorded by the launcher);
+        # your normal Firefox is a different process and is never touched.
+        pidfile = os.path.expanduser("~/.kiosk_firefox.pid")
+        try:
+            pid = int(open(pidfile).read().strip())
+            os.kill(pid, 15)   # SIGTERM = graceful quit
+            return {"ok": True, "msg": f"closing kiosk (pid {pid})"}
+        except FileNotFoundError:
+            return {"ok": False, "msg": "no kiosk pid file - was it launched via rig_kiosk_launch.sh?"}
+        except ProcessLookupError:
+            return {"ok": True, "msg": "kiosk already closed"}
+        except Exception as e:
+            return {"ok": False, "msg": str(e)}
     path = SCRIPTS.get(which)
     if not path or not os.path.exists(path):
         return {"ok": False, "msg": f"script not found: {path}"}
@@ -222,7 +240,13 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body if isinstance(body, bytes) else body.encode())
     def do_GET(self):
         u = urlparse(self.path)
-        if u.path in ("/", "/index.html"):
+        if u.path in ("/", "/index.html", "/launch"):
+            try:
+                with open(os.path.join(HERE, "launch.html"), "rb") as f:
+                    self._send(200, f.read(), "text/html")
+            except FileNotFoundError:
+                self._send(404, b"launch.html not found next to the server", "text/plain")
+        elif u.path in ("/kiosk", "/kiosk.html"):
             try:
                 with open(os.path.join(HERE, "rig_kiosk.html"), "rb") as f:
                     self._send(200, f.read(), "text/html")

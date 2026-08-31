@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=RIG Button
+Comment=Big desktop launch button for the rig kiosk
+Exec=/usr/bin/python3 /home/fasterbybaxter/rig_button.py
+Terminal=false
+X-GNOME-Autostart-enabled=true

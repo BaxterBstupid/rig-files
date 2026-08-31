@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Rig Launcher</title>
+<style>
+  :root{ --bg:#0d1013; --amber:#f5b428; --amber2:#ffcf57; --dim:#8a97a3; --red:#ff5a52;
+    --font:"DejaVu Sans","Liberation Sans",system-ui,sans-serif; }
+  *{ margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{ width:100%; height:100%; overflow:hidden; background:var(--bg); color:#eef2f4;
+    font-family:var(--font); -webkit-user-select:none; user-select:none; }
+  #fit{ position:fixed; inset:0; overflow:hidden; }
+  .screen{ width:1024px; height:600px; transform-origin:top left; position:absolute; top:0; left:0;
+    display:flex; padding:26px; }
+  .launch{ flex:1; border-radius:32px; border:5px solid var(--amber);
+    background:radial-gradient(circle at 50% 38%, #2a2410 0%, #17190f 60%, #121412 100%);
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:22px;
+    cursor:pointer; transition:transform .06s, filter .15s; position:relative; }
+  .launch:active{ transform:scale(.985); filter:brightness(1.3); }
+  .launch::before, .launch::after{ content:""; position:absolute; width:70px; height:70px; border:6px solid var(--amber); }
+  .launch::before{ top:30px; left:30px; border-right:none; border-bottom:none; border-radius:8px 0 0 0; }
+  .launch::after{ bottom:30px; right:30px; border-left:none; border-top:none; border-radius:0 0 8px 0; }
+  .reddot{ width:96px; height:96px; border-radius:50%; background:var(--red);
+    box-shadow:0 0 60px rgba(255,90,82,.6); animation:breathe 2.4s ease-in-out infinite; }
+  @keyframes breathe{ 0%,100%{opacity:.85; transform:scale(1)} 50%{opacity:1; transform:scale(1.06)} }
+  .big{ font-size:92px; font-weight:800; letter-spacing:1px; color:var(--amber2); line-height:1; text-align:center; }
+  .sub{ font-size:30px; font-weight:600; color:var(--dim); letter-spacing:2px; }
+  .over{ position:absolute; inset:0; background:rgba(10,12,14,.94); display:none;
+    flex-direction:column; align-items:center; justify-content:center; gap:26px; border-radius:32px; }
+  .over.show{ display:flex; }
+  .over .msg{ font-size:52px; font-weight:800; color:var(--amber2); }
+  .spin{ width:80px; height:80px; border:8px solid #2a2f36; border-top-color:var(--amber); border-radius:50%; animation:sp 1s linear infinite; }
+  @keyframes sp{ to{ transform:rotate(360deg) } }
+</style>
+</head>
+<body>
+<div id="fit">
+<div class="screen" id="canvas">
+  <div class="launch" id="launchBtn">
+    <div class="reddot"></div>
+    <div class="big">TAP TO START RIG</div>
+    <div class="sub">FIELD CONTROL KIOSK</div>
+    <div class="over" id="over"><div class="spin"></div><div class="msg">OPENING KIOSK…</div></div>
+  </div>
+</div>
+</div>
+<script>
+  function fit(){ document.getElementById('canvas').style.transform=
+    'scale('+(window.innerWidth/1024)+','+(window.innerHeight/600)+')'; }
+  window.addEventListener('resize',fit); fit();
+  document.getElementById('launchBtn').addEventListener('click', ()=>{
+    document.getElementById('over').classList.add('show');
+    setTimeout(()=>{ window.location.href='/kiosk'; }, 600);
+  });
+</script>
+</body>
+</html>
