@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Rig Point Cloud</title>
+<style>
+  :root{ --bg:#0d1013; --panel:#161b21; --edge:#232b34; --ink:#eef2f4; --dim:#8a97a3; --amber:#f5c542; --green:#3ad17a; --red:#ff5a52;
+    --font:"DejaVu Sans","Liberation Sans",system-ui,sans-serif; --mono:"DejaVu Sans Mono","Liberation Mono",monospace; }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:var(--bg);color:var(--ink);font-family:var(--font)}
+  #view{position:fixed;inset:0}
+  .hud{position:fixed;top:12px;left:12px;width:260px;background:rgba(22,27,33,.9);border:1px solid var(--edge);border-radius:10px;padding:10px 14px;font-family:var(--mono);font-size:13px;line-height:1.6}
+  .hud b{color:var(--amber);font-family:var(--font);font-size:14px}
+  .ok{color:var(--green)} .bad{color:var(--red)} .dim{color:var(--dim)}
+  .row{display:flex;align-items:center;gap:8px;margin-top:6px}
+  .row label{width:74px;color:var(--dim);font-size:12px}
+  .row input[type=range]{flex:1;accent-color:var(--amber)}
+  .row .v{width:52px;text-align:right;font-size:12px}
+  .help{position:fixed;bottom:10px;left:12px;color:#6b7680;font-size:12px}
+</style>
+</head>
+<body>
+<div id="view"></div>
+<div class="hud"><b>L2 POINT CLOUD</b><br>
+  <span id="st" class="dim">connecting…</span><br>
+  <span class="dim">pts</span> <span id="np">–</span> &nbsp;<span class="dim">frames</span> <span id="nf">–</span> &nbsp;<span class="dim">rate</span> <span id="fps">–</span>
+  <div class="row"><label>point size</label><input id="sz" type="range" min="1" max="40" step="1"><span class="v" id="szv"></span></div>
+  <div class="row"><label>decay</label><input id="dc" type="range" min="0" max="10" step="0.25"><span class="v" id="dcv"></span></div>
+  <div class="row"><label>fade old</label><input id="fd" type="checkbox"><span class="dim" style="font-size:11px">dim older frames</span></div>
+  <div class="row" style="margin-top:10px"><label class="dim" style="width:auto;font-size:11px">ATTITUDE — turn until the floor lies flat on the grid</label></div>
+  <div class="row"><label>roll X</label><input id="rx" type="range" min="-180" max="180" step="5"><span class="v" id="rxv"></span></div>
+  <div class="row"><label>pitch Y</label><input id="ry" type="range" min="-180" max="180" step="5"><span class="v" id="ryv"></span></div>
+  <div class="row"><label>yaw Z</label><input id="rz" type="range" min="-180" max="180" step="5"><span class="v" id="rzv"></span></div>
+</div>
+<div class="help">drag = orbit · wheel = zoom · right-drag = pan · settings are remembered</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// ---- settings (remembered in this browser) ----
+const DEF={size:5, decay:2.0, fade:true, roll:0, pitch:0, yaw:0};
+function loadCfg(){ try{ return Object.assign({},DEF,JSON.parse(localStorage.getItem('rigcloud')||'{}')); }catch(e){ return Object.assign({},DEF); } }
+function saveCfg(c){ try{ localStorage.setItem('rigcloud',JSON.stringify(c)); }catch(e){} }
+const cfg=loadCfg();
+
+// ---- decay logic (pure; unit-tested) ----
+// keep frames whose age (relative to the newest frame) <= decaySec; decay 0 => newest only
+function retainFrames(frames, decaySec){
+  if(!frames.length) return frames;
+  const tNew=frames[frames.length-1].t;
+  if(decaySec<=0) return [frames[frames.length-1]];
+  let i=0; while(i<frames.length-1 && (tNew-frames[i].t)>decaySec*1000) i++;
+  return frames.slice(i);
+}
+// brightness for a frame of a given age: newest=1, oldest -> 0.25 when fading, else 1
+function ageBrightness(ageMs, decaySec, fade){
+  if(!fade || decaySec<=0) return 1;
+  const a=Math.min(1, ageMs/(decaySec*1000)); return 1-0.75*a;
+}
+if(typeof module!=='undefined'){ module.exports={retainFrames,ageBrightness}; }
+
+(function(){
+  if(typeof THREE==='undefined') return;   // (node test harness)
+  const $=s=>document.querySelector(s);
+  const W=()=>innerWidth, H=()=>innerHeight;
+  const scene=new THREE.Scene();
+  const cam=new THREE.PerspectiveCamera(55, W()/H(), 0.05, 500); cam.up.set(0,0,1); cam.position.set(6,-6,4);
+  const ren=new THREE.WebGLRenderer({antialias:false}); ren.setSize(W(),H()); ren.setClearColor(0x0d1013,1); $('#view').appendChild(ren.domElement);
+  scene.add(new THREE.GridHelper(20,20,0x2a3440,0x1a2028).rotateX(Math.PI/2));
+  scene.add(new THREE.AxesHelper(0.6));
+
+  // orbit / zoom / pan (mouse + touch), no external deps
+  let target=new THREE.Vector3(0,0,0), sph=new THREE.Spherical().setFromVector3(cam.position.clone().sub(target));
+  let drag=null; const el=ren.domElement;
+  el.addEventListener('contextmenu',e=>e.preventDefault());
+  el.addEventListener('mousedown',e=>{drag={b:e.button,x:e.clientX,y:e.clientY}});
+  addEventListener('mouseup',()=>drag=null);
+  addEventListener('mousemove',e=>{ if(!drag)return; const dx=e.clientX-drag.x, dy=e.clientY-drag.y; drag.x=e.clientX; drag.y=e.clientY;
+    if(drag.b===0){ sph.theta-=dx*0.006; sph.phi=Math.min(Math.PI-0.05,Math.max(0.05,sph.phi-dy*0.006)); }
+    else { const pan=new THREE.Vector3(-dx,dy,0).multiplyScalar(sph.radius*0.0015).applyQuaternion(cam.quaternion); target.add(pan); }
+    update(); });
+  el.addEventListener('wheel',e=>{ sph.radius*=Math.exp(e.deltaY*0.001); sph.radius=Math.max(0.5,Math.min(200,sph.radius)); update(); },{passive:true});
+  function update(){ cam.position.setFromSpherical(sph).add(target); cam.lookAt(target); }
+  update();
+  let t0=null,d0=0;
+  el.addEventListener('touchstart',e=>{ if(e.touches.length===1)t0={x:e.touches[0].clientX,y:e.touches[0].clientY}; if(e.touches.length===2)d0=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); },{passive:true});
+  el.addEventListener('touchmove',e=>{ if(e.touches.length===1&&t0){ const dx=e.touches[0].clientX-t0.x, dy=e.touches[0].clientY-t0.y; t0={x:e.touches[0].clientX,y:e.touches[0].clientY}; sph.theta-=dx*0.006; sph.phi=Math.min(Math.PI-0.05,Math.max(0.05,sph.phi-dy*0.006)); update(); }
+    if(e.touches.length===2){ const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); sph.radius*=d0/d; d0=d; update(); } },{passive:true});
+  addEventListener('resize',()=>{ cam.aspect=W()/H(); cam.updateProjectionMatrix(); ren.setSize(W(),H()); });
+
+  // ---- controls ----
+  const sz=$('#sz'), dc=$('#dc'), fd=$('#fd');
+  sz.value=cfg.size; dc.value=cfg.decay; fd.checked=cfg.fade;
+  const mat=new THREE.PointsMaterial({size:cfg.size/100, vertexColors:true, sizeAttenuation:true});
+  function showVals(){ $('#szv').textContent=(cfg.size/100).toFixed(2)+' m'; $('#dcv').textContent=cfg.decay.toFixed(2)+' s'; }
+  sz.oninput=()=>{ cfg.size=+sz.value; mat.size=cfg.size/100; showVals(); saveCfg(cfg); };
+  dc.oninput=()=>{ cfg.decay=+dc.value; showVals(); saveCfg(cfg); rebuild(); };
+  fd.onchange=()=>{ cfg.fade=fd.checked; saveCfg(cfg); rebuild(); };
+  showVals();
+
+  // ---- attitude: the LiDAR is mounted on its side; rotate the whole cloud to level it ----
+  const rig=new THREE.Group(); scene.add(rig);
+  const d2r=d=>d*Math.PI/180;
+  function applyAttitude(){ rig.rotation.set(d2r(cfg.roll), d2r(cfg.pitch), d2r(cfg.yaw), 'XYZ');
+    $('#rxv').textContent=cfg.roll+'°'; $('#ryv').textContent=cfg.pitch+'°'; $('#rzv').textContent=cfg.yaw+'°'; }
+  const rx=$('#rx'), ry=$('#ry'), rz=$('#rz'); rx.value=cfg.roll; ry.value=cfg.pitch; rz.value=cfg.yaw;
+  rx.oninput=()=>{cfg.roll=+rx.value; applyAttitude(); saveCfg(cfg);};
+  ry.oninput=()=>{cfg.pitch=+ry.value; applyAttitude(); saveCfg(cfg);};
+  rz.oninput=()=>{cfg.yaw=+rz.value; applyAttitude(); saveCfg(cfg);};
+  applyAttitude();
+
+  // ---- geometry with room to grow ----
+  let pts=null, geo=null, cap=0;
+  function ensure(n){ if(n<=cap && geo) return; cap=Math.max(Math.ceil(n*1.5), 8192);
+    if(pts){ rig.remove(pts); geo.dispose(); }
+    geo=new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(cap*3),3));
+    geo.setAttribute('color',    new THREE.BufferAttribute(new Float32Array(cap*3),3));
+    pts=new THREE.Points(geo,mat); rig.add(pts); }
+  function turbo(t){ t=Math.min(1,Math.max(0,t));
+    return [ 0.13+t*(4.6*t-4.2*t*t+0.4), 0.09+t*(2.9-2.3*t), 0.5+t*(1.6-2.6*t) ]; }
+
+  // ---- frame ring + decay ----
+  let frames=[];            // {t, n, a:Float32Array [x,y,z,i]*n}
+  let imin=Infinity, imax=-Infinity;   // smoothed intensity range for stable colors
+  function rebuild(){
+    frames=retainFrames(frames, cfg.decay);
+    let total=0; for(const f of frames) total+=f.n;
+    ensure(total);
+    const P=geo.attributes.position.array, C=geo.attributes.color.array;
+    // intensity range: EMA toward this set's min/max so colors don't flicker as frames come and go
+    let lo=Infinity, hi=-Infinity;
+    for(const f of frames){ const a=f.a; for(let i=0;i<f.n;i++){ const v=a[i*4+3]; if(v<lo)lo=v; if(v>hi)hi=v; } }
+    if(isFinite(lo)){ imin=isFinite(imin)?imin*0.8+lo*0.2:lo; imax=isFinite(imax)?imax*0.8+hi*0.2:hi; }
+    const span=(imax-imin)||1, tNew=frames.length?frames[frames.length-1].t:0;
+    let k=0;
+    for(const f of frames){
+      const br=ageBrightness(tNew-f.t, cfg.decay, cfg.fade), a=f.a;
+      for(let i=0;i<f.n;i++,k++){
+        P[k*3]=a[i*4]; P[k*3+1]=a[i*4+1]; P[k*3+2]=a[i*4+2];
+        const c=turbo((a[i*4+3]-imin)/span); C[k*3]=c[0]*br; C[k*3+1]=c[1]*br; C[k*3+2]=c[2]*br; } }
+    geo.setDrawRange(0,total); geo.attributes.position.needsUpdate=true; geo.attributes.color.needsUpdate=true;
+    $('#np').textContent=total; $('#nf').textContent=frames.length;
+  }
+  let fcount=0,lastT=performance.now();
+  async function poll(){
+    try{
+      const r=await fetch('/cloud.bin?t='+Date.now(),{cache:'no-store'});
+      if(r.status===503){ $('#st').textContent='waiting for LiDAR (rig off / not hot)'; $('#st').className='dim'; return; }
+      const buf=await r.arrayBuffer(); const a=new Float32Array(buf); const n=(a.length/4)|0;
+      frames.push({t:performance.now(), n, a});
+      rebuild();
+      $('#st').textContent='LIVE'; $('#st').className='ok';
+      fcount++; const now=performance.now(); if(now-lastT>1000){ $('#fps').textContent=(fcount*1000/(now-lastT)).toFixed(1)+' Hz'; fcount=0; lastT=now; }
+    }catch(e){ $('#st').textContent='no server'; $('#st').className='bad'; }
+  }
+  setInterval(poll, 160);
+  (function loop(){ requestAnimationFrame(loop); ren.render(scene,cam); })();
+})();
+</script>
+</body>
+</html>

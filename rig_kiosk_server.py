@@ -62,7 +62,48 @@ THERMAL = {
 STATE = {"data": {}, "lock": threading.Lock()}
 # latest camera frame (downscaled JPEG bytes) for the /camera.jpg endpoint
 CAM = {"jpeg": None, "lock": threading.Lock()}
+
+# latest LiDAR scan as compact float32 [x,y,z,intensity]*N (downsampled) for the /cloud viewer
+CLOUD = {"bin": None, "n": 0, "ts": 0.0, "lock": threading.Lock()}
+CLOUD_MAX_POINTS = 4000      # keep the WiFi payload small (~64 KB/frame at 4000 pts)
+CLOUD_FPS = 6.0
+
+def cloud_to_bin(data, point_step, n_points, fields):
+    """PointCloud2 bytes -> float32 [x,y,z,intensity]*M bytes, using the message's OWN field
+    offsets (so padding/extra fields like ring/time never matter). fields: [(name, offset, datatype)]."""
+    import numpy as np
+    dt_map = {1:"i1",2:"u1",3:"<i2",4:"<u2",5:"<i4",6:"<u4",7:"<f4",8:"<f8"}
+    names, fmts, offs = [], [], []
+    for name, off, dtype in fields:
+        if name in ("x","y","z","intensity"):
+            names.append(name); fmts.append(dt_map[dtype]); offs.append(off)
+    if not all(k in names for k in ("x","y","z")):
+        return None, 0
+    dt = np.dtype({"names": names, "formats": fmts, "offsets": offs, "itemsize": point_step})
+    arr = np.frombuffer(data, dtype=dt, count=n_points)
+    if n_points > CLOUD_MAX_POINTS:
+        arr = arr[::-(-n_points // CLOUD_MAX_POINTS)]   # ceil stride -> never exceeds the cap
+    out = np.empty((len(arr), 4), dtype="<f4")
+    out[:,0] = arr["x"]; out[:,1] = arr["y"]; out[:,2] = arr["z"]
+    out[:,3] = arr["intensity"] if "intensity" in names else 0.0
+    out = out[np.isfinite(out).all(axis=1)]      # drop NaN/inf points
+    return out.tobytes(), len(out)
 CAM_W, CAM_H, CAM_QUALITY = 480, 300, 50   # low-res reference, small payload
+
+def _mock_cloud(t):
+    """synthetic scan: a room box + floor, slowly rotating, with intensity by height"""
+    import numpy as np, math
+    rng = np.random.default_rng(int(t*10) % 1000)
+    n = 1800
+    a = rng.uniform(-math.pi, math.pi, n); r = rng.uniform(2.0, 6.0, n)
+    x = r*np.cos(a); y = r*np.sin(a); z = rng.uniform(-1.2, 1.8, n)
+    wall = rng.random(n) < 0.7
+    x[wall] = np.sign(x[wall])*6.0*rng.random(wall.sum()) ; y[wall] = np.clip(y[wall], -6, 6)
+    c, s_ = math.cos(t*0.3), math.sin(t*0.3)
+    xr, yr = x*c - y*s_, x*s_ + y*c
+    inten = (z - z.min()) / (np.ptp(z) + 1e-6) * 200.0
+    out = np.column_stack([xr, yr, z, inten]).astype("<f4")
+    return out.tobytes(), n
 
 def mock_reader():
     """Fake but plausible live data for sandbox/PC testing."""
@@ -84,6 +125,12 @@ def mock_reader():
         }
         with STATE["lock"]:
             STATE["data"] = d
+        try:
+            b, n = _mock_cloud(time.time())
+            with CLOUD["lock"]:
+                CLOUD["bin"] = b; CLOUD["n"] = n; CLOUD["ts"] = time.time()
+        except Exception:
+            pass
         time.sleep(0.5)
 
 def ros_reader():
@@ -105,12 +152,26 @@ def ros_reader():
     stamps = {k: deque() for k in STREAMS}
     ever   = {k: False for k in STREAMS}
     l2_temp = {"v": None}
+    _last_cloud = [0.0]
 
     rclpy.init()
     node = rclpy.create_node("rig_kiosk")
     def make_cb(kk):
         def cb(msg):
             stamps[kk].append(time.time()); ever[kk] = True
+            # lidar: stash a downsampled float32 cloud for the /cloud viewer, throttled
+            if kk == "lidar":
+                nowl = time.time()
+                if nowl - _last_cloud[0] >= 1.0 / CLOUD_FPS:
+                    _last_cloud[0] = nowl
+                    try:
+                        flds = [(fl.name, fl.offset, fl.datatype) for fl in msg.fields]
+                        b, n = cloud_to_bin(bytes(msg.data), msg.point_step, msg.width * msg.height, flds)
+                        if b is not None:
+                            with CLOUD["lock"]:
+                                CLOUD["bin"] = b; CLOUD["n"] = n; CLOUD["ts"] = nowl
+                    except Exception:
+                        pass
             # camera: also stash a downscaled JPEG, throttled to ~8fps
             if kk == "camera" and _cam_ok:
                 nowc = time.time()
@@ -255,6 +316,23 @@ class Handler(BaseHTTPRequestHandler):
         elif u.path == "/data":
             with STATE["lock"]:
                 self._send(200, json.dumps(STATE["data"]))
+        elif u.path == "/cloud.bin":
+            with CLOUD["lock"]:
+                b, n, ts = CLOUD["bin"], CLOUD["n"], CLOUD["ts"]
+            if b is None:
+                self._send(503, b"no cloud yet", "text/plain"); return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(b)))
+            self.send_header("X-Points", str(n)); self.send_header("X-Stamp", str(ts))
+            self.send_header("Cache-Control", "no-store"); self.end_headers()
+            self.wfile.write(b)
+        elif u.path in ("/cloud", "/cloud.html"):
+            try:
+                with open(os.path.join(HERE, "cloud.html"), "rb") as f:
+                    self._send(200, f.read(), "text/html")
+            except FileNotFoundError:
+                self._send(404, b"cloud.html not found next to the server", "text/plain")
         elif u.path == "/camera.jpg":
             with CAM["lock"]:
                 jpg = CAM["jpeg"]
