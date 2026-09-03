@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=1024, height=600, initial-scale=1, user-scalable=no">
+<title>Rig Field Control</title>
+<style>
+  /* ============================================================
+     RIG FIELD KIOSK — sized for Waveshare 1024x600, 7 inch
+     A visual/touch MOCK: buttons don't fire real scripts yet.
+     Press F11 in the browser for true fullscreen (kiosk feel).
+     Purpose: judge legibility + touch-target size on the real screen.
+     ============================================================ */
+
+  :root{
+    --bg:#0d1013;            /* near-black, low glare in a dark barn, easy on eyes */
+    --panel:#161b21;
+    --edge:#232b34;
+    --ink:#eef2f4;           /* high-contrast text */
+    --dim:#8a97a3;
+    --green:#3ad17a;
+    --amber:#f5c542;
+    --red:#ff5a52;
+    --blue:#4aa8ff;
+    --font: "DejaVu Sans", "Liberation Sans", system-ui, sans-serif;
+    --mono: "DejaVu Sans Mono", "Liberation Mono", monospace;
+  }
+
+  *{ margin:0; padding:0; box-sizing:border-box; }
+  html,body{
+    width:1024px; height:600px; overflow:hidden;
+    background:var(--bg); color:var(--ink);
+    font-family:var(--font);
+    -webkit-user-select:none; user-select:none;
+    -webkit-tap-highlight-color:transparent;
+  }
+
+  .screen{ width:1024px; height:600px; display:flex; flex-direction:column; padding:14px; gap:12px; }
+
+  /* ---- STATUS BAR: the "are we rolling?" line, unmistakable ---- */
+  .status{
+    height:92px; border-radius:14px; display:flex; align-items:center; padding:0 26px; gap:22px;
+    border:2px solid var(--edge); background:var(--panel); transition:all .2s;
+  }
+  .status .dot{ width:30px; height:30px; border-radius:50%; flex:none; }
+  .status .label{ font-size:44px; font-weight:800; letter-spacing:.5px; }
+  .status .clock{ margin-left:auto; font-family:var(--mono); font-size:34px; color:var(--dim); }
+
+  /* status states */
+  .st-off   .dot{ background:var(--dim); }
+  .st-on    .dot{ background:var(--green); box-shadow:0 0 18px var(--green); }
+  .st-cap   { border-color:var(--red); background:#241416; }
+  .st-cap   .dot{ background:var(--red); box-shadow:0 0 22px var(--red); animation:pulse 1s infinite; }
+  .st-cap   .label{ color:var(--red); }
+  @keyframes pulse{ 0%,100%{opacity:1} 50%{opacity:.35} }
+
+  /* ---- MAIN: buttons left, monitor bars right ---- */
+  .main{ flex:1; display:flex; gap:12px; min-height:0; }
+
+  .buttons{ width:340px; display:flex; flex-direction:column; gap:12px; }
+  .btn{
+    flex:1; border-radius:14px; border:2px solid var(--edge); background:var(--panel);
+    color:var(--ink); font-size:30px; font-weight:700; letter-spacing:.5px;
+    display:flex; align-items:center; justify-content:center; gap:14px;
+    cursor:pointer; transition:transform .05s, background .15s;
+  }
+  .btn:active{ transform:scale(.97); }
+  .btn .ic{ font-size:34px; }
+  .btn-start{ border-color:#1f5c3a; } .btn-start:active{ background:#12301f; }
+  .btn-stop { border-color:#5c2a2a; } .btn-stop:active { background:#301414; }
+  .btn-cap  { border-color:#264a6b; font-size:26px; } .btn-cap:active{ background:#12283d; }
+  .btn small{ display:block; font-size:15px; font-weight:500; color:var(--dim); margin-top:4px; }
+
+  /* ---- MONITOR PANEL: flow + card + heat bars ---- */
+  .monitor{ flex:1; background:var(--panel); border:2px solid var(--edge); border-radius:14px;
+            padding:14px 16px; display:flex; flex-direction:column; gap:9px; }
+  .mrow{ display:flex; align-items:center; gap:12px; height:34px; }
+  .mrow .name{ width:70px; font-size:18px; font-weight:600; color:var(--dim); }
+  .bar{ flex:1; height:22px; border-radius:6px; background:#0b0e11; overflow:hidden; position:relative; }
+  .fill{ height:100%; border-radius:6px; transition:width .4s; }
+  .val{ width:118px; text-align:right; font-family:var(--mono); font-size:17px; }
+  .divider{ height:1px; background:var(--edge); margin:3px 0; }
+  .g{ background:var(--green);} .a{ background:var(--amber);} .r{ background:var(--red);} .b{ background:var(--blue);}
+  .tg{ color:var(--green);} .ta{ color:var(--amber);} .tr{ color:var(--red);} .tdim{color:var(--dim);}
+
+  .hint{ position:fixed; bottom:4px; right:8px; font-size:11px; color:#3a4650; }
+
+  .left{flex:1;display:flex;flex-direction:column;gap:10px;min-width:0;}
+  .buttons{display:flex;gap:8px;height:70px;flex-direction:row;}
+  .btn{flex:1;height:auto;border-radius:11px;border:2px solid var(--edge);background:var(--panel);
+    color:var(--ink);font-size:16px;font-weight:700;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;gap:3px;text-align:center;line-height:1.1;cursor:pointer;}
+  .btn .ic{font-size:20px;}
+  .btn small{font-size:10px;font-weight:500;color:var(--dim);}
+  .camera{flex:1;border-radius:11px;border:2px solid var(--edge);background:#05070a;
+    position:relative;overflow:hidden;display:flex;align-items:center;justify-content:center;}
+  .camera .feed{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;
+    image-rendering:auto;background:#05070a;}
+  .camera .tag{position:absolute;top:9px;left:11px;z-index:3;font-size:13px;color:var(--dim);
+    font-family:var(--mono);background:rgba(0,0,0,.55);padding:4px 9px;border-radius:6px;}
+  .camera .res{position:absolute;bottom:9px;right:11px;z-index:3;font-size:12px;color:#4a5560;
+    font-family:var(--mono);background:rgba(0,0,0,.4);padding:3px 7px;border-radius:5px;}
+  .monitor{width:340px;flex:none;}
+</style>
+</head>
+<body>
+<div class="screen">
+
+  <!-- STATUS — toggle the class on .status to preview states: st-off / st-on / st-cap -->
+  <div class="status st-cap" id="status">
+    <div class="dot"></div>
+    <div class="label" id="statusLabel">CAPTURING</div>
+    <div class="clock" id="clock">02:14</div>
+  </div>
+
+  <div class="main">
+    <div class="left">
+      <div class="buttons">
+        <div class="btn btn-start" onclick="fire('start')"><span class="ic">&#9654;</span>START RIG</div>
+        <div class="btn btn-stop" onclick="fire('stop')"><span class="ic">&#9632;</span>STOP RIG</div>
+        <div class="btn btn-cap" onclick="fire('capture')"><span class="ic">&#9679;</span>CAPTURE<small>lean</small></div>
+      </div>
+      <div class="camera">
+        <iframe id="cover" class="feed" src="/cloud?embed=1&mode=MAP" style="border:0"></iframe>
+        <div id="meshverdict" style="position:absolute;left:11px;right:11px;bottom:34px;z-index:4;
+          font-size:13px;color:#cfe3d4;background:rgba(8,12,10,.82);border:1px solid #2c4a34;
+          border-radius:8px;padding:7px 9px;display:none"></div>
+        <div class="tag">COVERAGE 3D &#8212; red = walk here again &middot; drag to orbit</div>
+        <div class="res" id="mapstat">0 voxels</div>
+      </div>
+    </div>
+    <div class="monitor">
+      <div class="mrow"><div class="name">LiDAR</div><div class="bar"><div class="fill g" id="b_lidar" style="width:100%"></div></div><div class="val tg" id="v_lidar">-- Hz</div></div>
+      <div class="mrow"><div class="name">Camera</div><div class="bar"><div class="fill g" id="b_camera" style="width:96%"></div></div><div class="val tg" id="v_camera">-- Hz</div></div>
+      <div class="mrow"><div class="name">IMU</div><div class="bar"><div class="fill g" id="b_imu" style="width:100%"></div></div><div class="val tg" id="v_imu">-- Hz</div></div>
+      <div class="mrow"><div class="name">Odom</div><div class="bar"><div class="fill b" id="b_odom" style="width:98%"></div></div><div class="val" id="v_odom">-- Hz</div></div>
+      <div class="divider"></div>
+      <div class="mrow"><div class="name">Card</div><div class="bar"><div class="fill g" id="b_card" style="width:62%"></div></div><div class="val tg" id="v_card">--</div></div>
+      <div class="divider"></div>
+      <div class="mrow"><div class="name">Jetson</div><div class="bar"><div class="fill a" id="b_jetson" style="width:72%"></div></div><div class="val ta" id="v_jetson">-- &#176;C</div></div>
+      <div class="mrow"><div class="name">L2</div><div class="bar"><div class="fill g" id="b_l2" style="width:45%"></div></div><div class="val tg" id="v_l2">-- &#176;C</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="hint">LIVE — bars from /data · buttons fire real scripts · F11 fullscreen</div>
+
+<script>
+  const $ = s => document.querySelector(s);
+  const bars = { lidar:{bar:'#b_lidar',val:'#v_lidar'}, camera:{bar:'#b_camera',val:'#v_camera'},
+                 imu:{bar:'#b_imu',val:'#v_imu'}, odom:{bar:'#b_odom',val:'#v_odom'} };
+  const cmap = {ok:'g', low:'a', dropped:'r', waiting:'b', watch:'a', hot:'r', na:'dim'};
+  function setBar(sel, frac, c){ const f=$(sel); if(!f)return;
+    f.style.width=Math.max(0,Math.min(1,frac))*100+'%'; f.className='fill '+c; }
+  function tcls(c){ return 'val t'+(c==='g'?'g':c==='a'?'a':c==='r'?'r':'dim'); }
+  async function tick(){
+    let d; try{ d=await (await fetch('/data',{cache:'no-store'})).json(); }catch(e){ return; }
+    window.__lastData = d;
+    try{ const ms=document.getElementById('mapstat');
+         if(ms && d.map) ms.textContent = (d.map.voxels||0).toLocaleString()+' voxels'+(d.map.capped?' (capped)':''); }catch(e){}
+    if(!d||!d.lidar) return;
+    for(const k in bars){ const s=d[k]; if(!s)continue; const c=cmap[s.state]||'g';
+      setBar(bars[k].bar, s.frac??0, c); const v=$(bars[k].val);
+      if(k==='odom'&&s.state==='waiting'){ v.textContent='waiting'; v.className='val tdim'; }
+      else { v.textContent=Math.round(s.hz)+' Hz'; v.className=tcls(c); } }
+    if(d.card){ const secs=d.card.secs_left, gb=d.card.gb_free;
+      const c=secs==null?'b':(secs>300?'g':secs>120?'a':'r');
+      setBar('#b_card', secs==null?(gb?Math.min(1,gb/256):0.5):Math.min(1,secs/1800), c);
+      $('#v_card').textContent=secs!=null?(Math.floor(secs/60)+'m left'):(gb!=null?gb+'GB':'--');
+      $('#v_card').className=tcls(c); }
+    for(const k of ['jetson','l2']){ const s=d[k]; if(!s)continue;
+      const c=s.state==='ok'?'g':s.state==='watch'?'a':s.state==='hot'?'r':'b';
+      setBar('#b_'+k, s.temp!=null?s.temp/95:0, c);
+      $('#v_'+k).textContent=s.temp!=null?s.temp.toFixed(0)+' °C':'??'; $('#v_'+k).className=tcls(c); }
+    const st=$('#status'), lab=$('#statusLabel');
+    if(d.capturing){ st.className='status st-cap'; lab.textContent='CAPTURING'; }
+    else if(d.rig_on){ st.className='status st-on'; lab.textContent='RIG ON'; }
+    else { st.className='status st-off'; lab.textContent='RIG OFF'; }
+  }
+  setInterval(tick,500); tick();
+  async function fire(which){ try{ const r=await (await fetch('/action?do='+which)).json();
+    console.log('action',which,r);}catch(e){ console.log('fail',e);} }
+
+  // COVERAGE PANEL: top-down map, red=thin -> green=well-seen; auto-mesh verdict on stop
+  const cv = document.getElementById('cover'), mv = document.getElementById('meshverdict');
+  let lastCap = false, meshShown = false;
+  function ramp(t){ // 0..1 -> [r,g,b]
+    const R=[255,51,38], Y=[255,217,51], G=[51,204,89];
+    if(t<0.5){const f=t/0.5;return [R[0]+(Y[0]-R[0])*f,R[1]+(Y[1]-R[1])*f,R[2]+(Y[2]-R[2])*f];}
+    const f=(t-0.5)/0.5;return [Y[0]+(G[0]-Y[0])*f,Y[1]+(G[1]-Y[1])*f,Y[2]+(G[2]-Y[2])*f];
+  }
+  function drawCover(buf){
+    const a = new Float32Array(buf), n = a.length>>2;
+    const W = cv.width = cv.clientWidth, H = cv.height = cv.clientHeight;
+    const ctx = cv.getContext('2d'); ctx.fillStyle='#05070a'; ctx.fillRect(0,0,W,H);
+    if(n < 10) return;
+    let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;
+    for(let i=0;i<n;i++){const x=a[i*4],y=a[i*4+1];
+      if(x<x0)x0=x; if(x>x1)x1=x; if(y<y0)y0=y; if(y>y1)y1=y;}
+    const pad=8, sc=Math.min((W-2*pad)/Math.max(x1-x0,.5),(H-2*pad)/Math.max(y1-y0,.5));
+    const ox=(W-sc*(x1-x0))/2, oy=(H-sc*(y1-y0))/2;
+    // count normalisation: 95th percentile of log2(1+count), sparse-sampled
+    const ls=[]; for(let i=0;i<n;i+=17) ls.push(Math.log2(1+a[i*4+3]));
+    ls.sort((p,q)=>p-q); const hi=Math.max(ls[Math.floor(ls.length*0.95)]||1,1e-6);
+    const img = ctx.getImageData(0,0,W,H), px = img.data;
+    for(let i=0;i<n;i++){
+      const u=Math.round(ox+sc*(a[i*4]-x0)), v=Math.round(H-(oy+sc*(a[i*4+1]-y0)));
+      if(u<0||u>=W-1||v<1||v>=H) continue;
+      const t=Math.min(Math.log2(1+a[i*4+3])/hi,1), c=ramp(t);
+      for(const [du,dv] of [[0,0],[1,0],[0,-1],[1,-1]]){
+        const k=((v+dv)*W+(u+du))*4; px[k]=c[0]; px[k+1]=c[1]; px[k+2]=c[2]; px[k+3]=255;
+      }
+    }
+    ctx.putImageData(img,0,0);
+  }
+  async function coverTick(){
+    let d=null; try{ d=JSON.parse(JSON.stringify(window.__lastData||null)); }catch(e){}
+    // v3: 3D view lives in the iframe; no 2D drawing here
+    const cap = d && d.capturing;
+    if(cap){ mv.style.display='none'; meshShown=false; }
+    if(lastCap && !cap && !meshShown){ pollMesh(); }
+    lastCap = !!cap;
+  }
+  async function pollMesh(){
+    for(let k=0;k<40;k++){
+      try{
+        const st = await (await fetch('/meshstatus',{cache:'no-store'})).json();
+        if(st.state==='done'){
+          const m=st.meta||{};
+          mv.textContent = 'MESH CHECK: '+(m.verts||0).toLocaleString()+' v / '
+            +(m.faces||0).toLocaleString()+' f in '+(m.seconds||'?')+'s — orbit on PC /cloud (MESH tab)';
+          mv.style.display='block'; meshShown=true; return;
+        }
+        if(st.state==='error'){ mv.textContent='MESH CHECK error — see /meshstatus'; mv.style.display='block'; return; }
+      }catch(e){}
+      await new Promise(r=>setTimeout(r,1000));
+    }
+  }
+  setInterval(coverTick, 2500); coverTick();
+</script>
+</body>
+</html>
