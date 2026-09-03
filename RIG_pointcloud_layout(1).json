@@ -1,0 +1,89 @@
+{
+  "configById": {
+    "3D!rigcloud": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 12,
+        "phi": 60,
+        "thetaOffset": 45,
+        "targetOffset": [
+          0,
+          0,
+          0
+        ],
+        "target": [
+          0,
+          0,
+          0
+        ],
+        "targetOrientation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "fovy": 45,
+        "near": 0.5,
+        "far": 5000
+      },
+      "followMode": "follow-none",
+      "followTf": "unilidar_lidar",
+      "scene": {
+        "backgroundColor": "#0d1013",
+        "transforms": {
+          "visible": true,
+          "showLabel": true,
+          "axisSize": 0.5
+        }
+      },
+      "transforms": {},
+      "layers": {},
+      "publish": {},
+      "topics": {
+        "/unilidar/cloud": {
+          "visible": true,
+          "pointSize": 3,
+          "pointShape": "circle",
+          "decayTime": 0.5,
+          "colorMode": "colormap",
+          "colorField": "intensity",
+          "colorMap": "turbo",
+          "cubeOutline": false
+        }
+      },
+      "fixedFrame": "unilidar_lidar"
+    },
+    "RawMessages!righdr": {
+      "topicPath": "/unilidar/cloud.header",
+      "defaultExpanded": true,
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false
+    },
+    "RawMessages!rigtemp": {
+      "topicPath": "/unilidar/apd_temperature",
+      "defaultExpanded": true,
+      "diffEnabled": false,
+      "diffMethod": "custom",
+      "diffTopicPath": "",
+      "showFullMessageForDiff": false
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": {
+    "speed": 1
+  },
+  "layout": {
+    "direction": "row",
+    "first": "3D!rigcloud",
+    "second": {
+      "direction": "column",
+      "first": "RawMessages!righdr",
+      "second": "RawMessages!rigtemp",
+      "splitPercentage": 50
+    },
+    "splitPercentage": 75
+  }
+}
