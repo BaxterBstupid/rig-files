@@ -88,6 +88,63 @@ def cloud_to_bin(data, point_step, n_points, fields):
     out[:,3] = arr["intensity"] if "intensity" in names else 0.0
     out = out[np.isfinite(out).all(axis=1)]      # drop NaN/inf points
     return out.tobytes(), len(out)
+
+# ---------- LIVE COVERAGE MAP (world-frame accumulation of /cloud_registered) ----------
+REG_TOPIC = "/cloud_registered"        # Point-LIO's per-scan world-frame cloud (verified in source)
+MAP_VOXEL = 0.05
+MAP_MAX_VOXELS = 2_000_000             # hard memory cap (~56 MB); capped flag exposed, hits still count
+_MAP = {"vm": None, "lock": threading.Lock(), "was_capturing": False}
+
+def get_map():
+    if _MAP["vm"] is None:
+        import sys as _sys, os as _os
+        _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+        from map_accumulator import VoxelMap
+        _MAP["vm"] = VoxelMap(MAP_VOXEL, MAP_MAX_VOXELS)
+    return _MAP["vm"]
+
+# ---------- MESH CHECK (instrument mesh of the accumulated map) ----------
+MESH_DIR = "/tmp/rig_meshcheck"
+MESH = {"state": "idle", "meta": None, "err": "", "started": 0.0, "lock": threading.Lock()}
+
+def start_meshcheck(depth=8):
+    import subprocess, sys as _sys, os as _os
+    with MESH["lock"]:
+        if MESH["state"] == "running":
+            return {"ok": False, "err": "already running"}
+        vm = get_map()
+        vm.merge()
+        pts, cnts = vm.full_points_counts()
+        if len(pts) < 5000:
+            return {"ok": False, "err": f"map too small ({len(pts)} voxels) - run lean/capture first"}
+        _os.makedirs(MESH_DIR, exist_ok=True)
+        import numpy as _np
+        snap = _np.empty((len(pts), 4), _np.float32)
+        snap[:, :3] = pts; snap[:, 3] = cnts
+        snap_path = _os.path.join(MESH_DIR, "map_snapshot.npy")
+        _np.save(snap_path, snap)
+        script = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "mesh_check.py")
+        prefix = _os.path.join(MESH_DIR, "mesh")
+        proc = subprocess.Popen([_sys.executable, script, snap_path, prefix, "--depth", str(depth)],
+                                stdout=open(_os.path.join(MESH_DIR, "mesh.log"), "w"),
+                                stderr=subprocess.STDOUT)
+        MESH["state"] = "running"; MESH["err"] = ""; MESH["meta"] = None; MESH["started"] = time.time()
+    def waiter():
+        rc = proc.wait()
+        with MESH["lock"]:
+            if rc == 0:
+                try:
+                    MESH["meta"] = json.load(open(os.path.join(MESH_DIR, "mesh.json")))
+                    MESH["state"] = "done"
+                except Exception as e:
+                    MESH["state"] = "error"; MESH["err"] = f"no meta: {e}"
+            else:
+                tail = ""
+                try: tail = open(os.path.join(MESH_DIR, "mesh.log")).read()[-400:]
+                except Exception: pass
+                MESH["state"] = "error"; MESH["err"] = f"exit {rc}: {tail}"
+    threading.Thread(target=waiter, daemon=True).start()
+    return {"ok": True, "state": "running"}
 CAM_W, CAM_H, CAM_QUALITY = 480, 300, 50   # low-res reference, small payload
 
 def _mock_cloud(t):
@@ -104,6 +161,37 @@ def _mock_cloud(t):
     inten = (z - z.min()) / (np.ptp(z) + 1e-6) * 200.0
     out = np.column_stack([xr, yr, z, inten]).astype("<f4")
     return out.tobytes(), n
+
+_ROOM = {"surf": None}
+def _mock_room_scan(t):
+    """One 'registered scan' from a sensor walking a 6x4x2.6 room with a missing
+    wall patch (the deliberate hole). World frame. Feeds the coverage map in mock."""
+    import numpy as np, math
+    if _ROOM["surf"] is None:
+        rng = np.random.default_rng(3)
+        def plane(n, o, u, v, ul, vl):
+            a = rng.uniform(0, ul, (n,1)); b = rng.uniform(0, vl, (n,1))
+            return np.array(o) + a*np.array(u) + b*np.array(v)
+        surf = np.concatenate([
+            plane(30000, (0,0,0), (1,0,0), (0,1,0), 6, 4),
+            plane(15000, (0,0,2.6), (1,0,0), (0,1,0), 6, 4),
+            plane(15000, (0,0,0), (0,1,0), (0,0,1), 4, 2.6),
+            plane(15000, (6,0,0), (0,1,0), (0,0,1), 4, 2.6),
+            plane(15000, (0,0,0), (1,0,0), (0,0,1), 6, 2.6),
+            plane(15000, (0,4,0), (1,0,0), (0,0,1), 6, 2.6),
+            plane(6000,  (1.5,1.5,0.8), (1,0,0), (0,1,0), 1.0, 0.6),
+        ])
+        hole = (surf[:,1] > 3.99) & (surf[:,0] > 2.4) & (surf[:,0] < 3.6) & (surf[:,2] > 0.9) & (surf[:,2] < 1.7)
+        _ROOM["surf"] = surf[~hole]
+    surf = _ROOM["surf"]
+    import numpy as np
+    cx, cy = 3 + 1.8*math.cos(t*0.15), 2 + 1.1*math.sin(t*0.15)   # sensor path, ~42 s lap
+    d2 = (surf[:,0]-cx)**2 + (surf[:,1]-cy)**2
+    near = np.flatnonzero(d2 < 16.0)
+    if len(near) == 0: return None
+    rng = np.random.default_rng(int(t*10) % 99991)
+    pick = rng.choice(near, size=min(900, len(near)), replace=False)
+    return surf[pick] + rng.normal(0, 0.008, (len(pick), 3))
 
 def mock_reader():
     """Fake but plausible live data for sandbox/PC testing."""
@@ -129,6 +217,19 @@ def mock_reader():
             b, n = _mock_cloud(time.time())
             with CLOUD["lock"]:
                 CLOUD["bin"] = b; CLOUD["n"] = n; CLOUD["ts"] = time.time()
+        except Exception:
+            pass
+        try:
+            scan = _mock_room_scan(time.time())
+            if scan is not None:
+                get_map().add_points(scan)
+            if int(time.time()) % 2 == 0:
+                get_map().merge()
+            vm = _MAP["vm"]
+            with STATE["lock"]:
+                if STATE["data"]:
+                    STATE["data"]["map"] = {"voxels": (len(vm.keys) if vm is not None else 0),
+                                            "capped": (vm.capped if vm is not None else False)}
         except Exception:
             pass
         time.sleep(0.5)
@@ -191,6 +292,17 @@ def ros_reader():
     for k, cfg in STREAMS.items():
         node.create_subscription(tmap[cfg["type"]], cfg["topic"], make_cb(k), 50)
     node.create_subscription(Float32, L2_TEMP_TOPIC, lambda m: l2_temp.__setitem__("v", m.data), 10)
+    def reg_cb(msg):
+        try:
+            flds = [(fl.name, fl.offset, fl.datatype) for fl in msg.fields]
+            b, n = cloud_to_bin(bytes(msg.data), msg.point_step, msg.width * msg.height, flds)
+            if b is not None and n:
+                import numpy as _np
+                arr = _np.frombuffer(b, _np.float32).reshape(-1, 4)
+                get_map().add_points(arr[:, :3])
+        except Exception:
+            pass
+    node.create_subscription(PointCloud2, REG_TOPIC, reg_cb, 50)
 
     # FIX (2026-08-28): spin CONTINUOUSLY in a dedicated thread so we catch EVERY message
     # on high-rate topics (was under-counting to ~3Hz because the old loop threw in a
@@ -250,8 +362,17 @@ def ros_reader():
         jt = jetson_temp()
         d["jetson"] = gauge(jt, THERMAL["jetson"])
         d["l2"]     = gauge(l2_temp["v"], THERMAL["l2"])
+        if capturing and not _MAP["was_capturing"]:
+            get_map().clear()               # fresh map per capture
+        _MAP["was_capturing"] = capturing
+        if int(now * 10) % 20 == 0:          # ~every 2 s of loop passes
+            try: get_map().merge()
+            except Exception: pass
         d["capturing"] = capturing
         d["rig_on"] = any(ever[k] for k in ("lidar","camera","imu"))
+        vm = _MAP["vm"]
+        d["map"] = {"voxels": (len(vm.keys) if vm is not None else 0),
+                    "capped": (vm.capped if vm is not None else False)}
         with STATE["lock"]:
             STATE["data"] = d
         time.sleep(0.1)
@@ -340,8 +461,43 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, jpg, "image/jpeg")
             else:
                 self._send(503, b"no frame yet", "text/plain")
+        elif u.path == "/map.bin":
+            vm = get_map(); vm.merge()
+            snap = vm.snapshot(150_000)
+            b = snap.tobytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(b)))
+            self.send_header("X-Voxels", str(len(vm.keys)))
+            self.send_header("X-Capped", "1" if vm.capped else "0")
+            self.send_header("Cache-Control", "no-store"); self.end_headers()
+            self.wfile.write(b)
+        elif u.path == "/map.json":
+            vm = get_map()
+            self._send(200, json.dumps({"voxels": len(vm.keys), "capped": vm.capped,
+                                        "voxel_size": MAP_VOXEL, "total_in": vm.total_in}))
+        elif u.path == "/mesh.bin":
+            try:
+                with open(os.path.join(MESH_DIR, "mesh.meshbin"), "rb") as fmesh:
+                    b = fmesh.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/octet-stream")
+                self.send_header("Content-Length", str(len(b)))
+                self.send_header("Cache-Control", "no-store"); self.end_headers()
+                self.wfile.write(b)
+            except FileNotFoundError:
+                self._send(404, b"no mesh yet - run MESH CHECK", "text/plain")
+        elif u.path == "/meshstatus":
+            with MESH["lock"]:
+                self._send(200, json.dumps({"state": MESH["state"], "meta": MESH["meta"],
+                                            "err": MESH["err"],
+                                            "elapsed": round(time.time()-MESH["started"],1) if MESH["state"]=="running" else 0}))
         elif u.path == "/action":
             q = parse_qs(u.query); do = (q.get("do") or [""])[0]
+            if do == "meshcheck":
+                self._send(200, json.dumps(start_meshcheck())); return
+            if do == "mapreset":
+                get_map().clear(); self._send(200, json.dumps({"ok": True})); return
             self._send(200, json.dumps(run_script(do)))
         else:
             self._send(404, b"{}")
