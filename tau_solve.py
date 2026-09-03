@@ -67,8 +67,12 @@ def hp(x, dt=0.02, sigma_s=0.4):
     return x - np.convolve(x, k, mode="same")
 
 def solve(cam_t, cam_v, od_t, od_v, max_lag=0.6, grid=0.005):
+    if len(cam_t) < 10 or len(od_t) < 10:
+        return float("nan"), 0.0, float("inf"), None
     lo = max(cam_t.min(), od_t.min()) + max_lag
     hi = min(cam_t.max(), od_t.max()) - max_lag
+    if hi - lo < 3.0:                       # under 3 s of usable overlap: refuse honestly
+        return float("nan"), 0.0, float("inf"), None
     tt = np.arange(lo, hi, 0.02)
     cam = zs(hp(np.interp(tt, cam_t, cam_v)))
     lags = np.arange(-max_lag, max_lag+1e-9, grid)
@@ -95,11 +99,16 @@ def main():
     if len(ct) < 20 or len(ot) < 20:
         print("[tau] not enough motion data"); sys.exit(2)
     tau, peak, width, _ = solve(ct, cv, ot, ov)
-    mid = 0.5*(ct.min()+ct.max())
+    if not np.isfinite(tau):
+        print("[tau] INSUFFICIENT OVERLAP between camera and odometry - no estimate"); sys.exit(2)
+    # split the OVERLAP window (not the camera span - odometry may be much shorter)
+    lo = max(ct.min(), ot.min()); hi = min(ct.max(), ot.max()); mid = 0.5*(lo+hi)
     tA = solve(ct[ct<mid], cv[ct<mid], ot, ov)[0]
     tB = solve(ct[ct>=mid], cv[ct>=mid], ot, ov)[0]
-    halves = abs(tA-tB)
+    halves = abs(tA-tB) if (np.isfinite(tA) and np.isfinite(tB)) else float("inf")
     ok = width < 0.100 and halves < 0.030
+    if not np.isfinite(halves):
+        print("[tau] halves check unavailable (overlap too short to split) - gate fails honestly")
     print(f"[tau] OFFSET (lidar-clock minus camera-clock): {tau*1000:+.1f} ms   peak corr {peak:.2f}")
     print(f"[tau] gates: peak width {width*1000:.0f} ms (<100) | halves differ {halves*1000:.1f} ms (<30)  -> {'PASS' if ok else 'WEAK - do not trust'}")
     if tau > 0:
