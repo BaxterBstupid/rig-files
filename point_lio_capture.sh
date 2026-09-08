@@ -13,14 +13,38 @@
 #   - Bag stops FIRST, THEN Point-LIO, and we WAIT for the save to finish.
 #   - Verifies the PCD wrote FRESH (mtime newer), copies it to the Desktop, timestamped.
 #   - Ends with a clear BAG / PCD summary, or a LOUD, honest failure.
+#   - SINGLE-INSTANCE LOCK (v2): a second launch (double-clicked icon) REFUSES loudly
+#     instead of clean-slate-killing the first run mid-capture (the double-RViz bug).
+#   - Icon-friendly (v2): pauses before closing so a Terminal=true .desktop window
+#     never vanishes before you can read the result.
 
 set -u
 # (temporarily relaxed around ROS2 sourcing below)
 
+# --- SINGLE-INSTANCE LOCK (must be FIRST: a 2nd launch must never reach the pkills) ---
+LOCK="/tmp/point_lio_capture.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+    echo "!!! point_lio_capture is ALREADY RUNNING (lock: $LOCK). !!!"
+    echo "!!! Refusing a second instance - that is the double-RViz / killed-mid-capture bug."
+    echo "!!! Use the EXISTING capture window (Ctrl-C there to stop it cleanly)."
+    echo "!!! If NO capture is really running (stale lock after a crash):  rmdir $LOCK"
+    read -r -p "Press Enter to close this window..." _
+    exit 1
+fi
+# release the lock on EVERY exit path (success, failure, abort, crash of this script)
+trap 'rmdir "$LOCK" 2>/dev/null' EXIT
+
 PCD_SRC="$HOME/point_lio_ws/src/point_lio_ros2/PCD/scans.pcd"
 STAMP="$(date +%H%M%S)"
-BAG="$HOME/Desktop/fusioncap_${STAMP}"
-PCD_DST="$HOME/Desktop/fusioncap_${STAMP}_scans.pcd"
+# record to the rig SSD when it's mounted; fall back to Desktop (SD card) if it isn't
+if mountpoint -q /mnt/rigdata; then
+    RECORD_BASE="/mnt/rigdata"
+else
+    echo "!!! WARNING: /mnt/rigdata NOT mounted - recording to Desktop (SD card) instead !!!"
+    RECORD_BASE="$HOME/Desktop"
+fi
+BAG="$RECORD_BASE/fusioncap_${STAMP}"
+PCD_DST="$RECORD_BASE/fusioncap_${STAMP}_scans.pcd"
 TOPICS=(/aft_mapped_to_init /image_raw /unilidar/imu /unilidar/cloud)
 
 # shellcheck source=/dev/null
@@ -31,8 +55,15 @@ source ~/point_lio_ws/install/setup.bash
 
 # --- PRE-FLIGHT: is the sensor actually publishing? (prevents capturing an empty bag) ---
 echo "=== Pre-flight: checking /unilidar/cloud is publishing (Start Rig must be up) ==="
-if ! timeout 5 ros2 topic echo --once /unilidar/cloud >/dev/null 2>&1; then
-    echo "!!! /unilidar/cloud is NOT publishing. Is Start Rig up? Aborting (nothing captured). !!!"
+ok=""
+for try_n in 1 2 3; do
+    if timeout 8 ros2 topic echo --once /unilidar/cloud >/dev/null 2>&1; then ok=1; break; fi
+    echo "    attempt $try_n: topic not seen yet (DDS discovery can be slow) - nudging daemon, retrying..."
+    ros2 daemon stop >/dev/null 2>&1; ros2 daemon start >/dev/null 2>&1
+done
+if [ -z "$ok" ]; then
+    echo "!!! /unilidar/cloud is NOT publishing after 3 tries. Is Start Rig up? Aborting (nothing captured). !!!"
+    read -r -p "Press Enter to close this window..." _
     exit 1
 fi
 echo "    sensor OK."
@@ -49,7 +80,7 @@ PCD_OLD_MTIME="$(stat -c %Y "$PCD_SRC" 2>/dev/null || echo 0)"
 
 echo "=== Launching Point-LIO (with RViz reference view). Hold rig DEAD STILL for IMU init... ==="
 # setsid -> own process group so we can signal the whole group (reliable SIGINT to the node)
-setsid ros2 launch point_lio mapping_unilidar_l2.launch.py rviz:=true \
+setsid ros2 launch point_lio mapping_unilidar_l2.launch.py rviz:=false \
     >/tmp/pointlio_capture.log 2>&1 &
 PLIO_PID=$!
 PLIO_PGID="$(ps -o pgid= -p "$PLIO_PID" | tr -d ' ')"
@@ -94,6 +125,7 @@ cleanup() {
         echo "   BAG  [ok]  $BAG"
         echo "   PCD  [FAIL - regenerate from bag]"
     fi
+    read -r -p "Done. Press Enter to close this window..." _
     exit 0
 }
 trap cleanup INT
