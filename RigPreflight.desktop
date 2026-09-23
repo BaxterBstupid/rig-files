@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=RIG PRE-FLIGHT
+Comment=Big Waveshare button - wholeness check + rig status + path to kiosk
+Exec=/usr/bin/python3 /home/fasterbybaxter/rig_preflight_button.py
+Terminal=false
+Icon=system-run
