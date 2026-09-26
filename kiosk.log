@@ -1,0 +1,13 @@
+[kiosk] ROS2 mode — serving http://localhost:8080
+Traceback (most recent call last):
+  File "/home/fasterbybaxter/Desktop/rig_kiosk_server.py", line 585, in <module>
+    main()
+  File "/home/fasterbybaxter/Desktop/rig_kiosk_server.py", line 582, in main
+    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+  File "/usr/lib/python3.10/socketserver.py", line 452, in __init__
+    self.server_bind()
+  File "/usr/lib/python3.10/http/server.py", line 137, in server_bind
+    socketserver.TCPServer.server_bind(self)
+  File "/usr/lib/python3.10/socketserver.py", line 466, in server_bind
+    self.socket.bind(self.server_address)
+OSError: [Errno 98] Address already in use

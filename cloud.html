@@ -54,7 +54,7 @@
   <div class="row"><label>yaw Z</label><input id="rz" type="range" min="-180" max="180" step="5"><span class="v" id="rzv"></span></div>
 </div>
 <div class="help">drag = orbit · wheel = zoom · right-drag = pan · settings are remembered</div>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="/three.min.js"></script>
 <script>
 // ---- settings (remembered) ----
 const DEF={size:5, decay:2.0, fade:true, roll:0, pitch:0, yaw:0, mapsize:6, mode:"SCAN"};
@@ -266,7 +266,12 @@ if(typeof module!=='undefined'){ module.exports={retainFrames,ageBrightness,covC
 
   setInterval(pollScan, 160);
   setInterval(pollMap, 2000);
-  setMode(cfg.mode||'SCAN');
+  const Q = new URLSearchParams(location.search);
+  if(Q.get('embed')){
+    const hint=document.querySelector('.hint'); if(hint) hint.style.display='none';
+    const help=document.querySelector('.help'); if(help) help.style.display='none'; }
+  const urlMode=(Q.get('mode')||'').toUpperCase();
+  setMode(['SCAN','MAP','MESH'].includes(urlMode) ? urlMode : (cfg.mode||'SCAN'));
   (function loop(){ requestAnimationFrame(loop); ren.render(scene,cam); })();
 })();
 </script>
