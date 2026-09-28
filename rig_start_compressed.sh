@@ -7,6 +7,15 @@
 #   NEW (ours) : v4l2 MJPEG -> jpegparse -> /camera/image_raw/compressed (no decode,
 #                no re-encode, timestamp-fixed). Bag ~1-5 GB, odom stays dense.
 #
+# 2026-09-28 (Master 20.13.72 triad-link):
+#   - HARD GATES: LiDAR and camera verifies now ABORT the bring-up (and tear down the
+#     partial start) if the sensor is not actually publishing — no more "launched but
+#     silent" proceeding into a 0-frame / 0-cloud capture. This is the point of the gate.
+#   - NEXT STEP corrected to point_lio_capture.sh (full re-solvable set: cloud+odom+imu+
+#     compressed). NOT capture_pointlio_texture.sh — that DROPS /unilidar/cloud (audit H2),
+#     making bags non-re-solvable.
+#   - Camera device is /dev/arducam (udev-pinned symlink; rig_camera_compressed.py default).
+#
 # TRACED DOWNSTREAM EFFECT (ADR-003 discipline — stated, not silent):
 #   overlay_check_node.py and colorized_fusion_node.py subscribe to RAW /image_raw,
 #   which this bringup does NOT publish -> they are DROPPED here. They are
@@ -16,8 +25,8 @@
 #   calibration file downstream, not ROS camera_info, so the recorded capture is fine.
 #
 # NODE LOCATION: expects ~/rig_camera_compressed.py (move it from ~/Desktop first).
-# NEXT AFTER THIS: run capture_pointlio_texture.sh (it runs Point-LIO + records; it
-#   already prefers /camera/image_raw/compressed, so it auto-selects our topic).
+# NEXT AFTER THIS: run point_lio_capture.sh (Point-LIO + records the FULL re-solvable
+#   set). It already prefers /camera/image_raw/compressed, so it auto-selects our topic.
 # ============================================================================
 source /opt/ros/humble/setup.bash
 source ~/ros2_ws/install/setup.bash
@@ -30,6 +39,13 @@ if ! mkdir "$LOCKDIR" 2>/dev/null; then
     exit 1
 fi
 trap 'rmdir "$LOCKDIR" 2>/dev/null' EXIT
+
+# Clean teardown used by the hard gates below (kills what THIS script started).
+teardown_partial () {
+    echo "=== Tearing down partial bring-up ==="
+    pkill -9 -f "rig_camera_compressed" 2>/dev/null
+    pkill -9 -f "unitree_lidar_ros2"   2>/dev/null
+}
 
 echo "=== Killing any lingering processes first (guaranteed clean slate) ==="
 PATTERNS=(
@@ -83,21 +99,27 @@ python3 ~/rig_camera_compressed.py > "$LOGDIR/camera.log" 2>&1 &
 echo "=== Waiting 5s for both to initialize ==="
 sleep 5
 
-echo "=== Verifying LiDAR is actually publishing (not just launched) ==="
-timeout 5 ros2 topic hz /unilidar/cloud > "$LOGDIR/lidar_check.log" 2>&1
-if [ -s "$LOGDIR/lidar_check.log" ]; then
-    echo "LiDAR data confirmed flowing."
+echo "=== HARD GATE: LiDAR must be publishing (/unilidar/cloud) ==="
+LIDAR_RATE=$(timeout 5 ros2 topic hz /unilidar/cloud 2>/dev/null | grep -oE 'average rate: [0-9.]+' | head -1 | grep -oE '[0-9.]+')
+if [ -n "$LIDAR_RATE" ]; then
+    echo "LiDAR data confirmed flowing: ${LIDAR_RATE} Hz"
 else
-    echo "!!! WARNING: LiDAR launched but no data. Check lidar.log / hardware. !!!"
+    echo "!!! LIDAR GATE FAILED: no data on /unilidar/cloud."
+    echo "!!! Check lidar.log / L2 power + cable. Aborting bring-up (do NOT capture)."
+    teardown_partial
+    exit 1
 fi
 
-echo "=== Verifying COMPRESSED camera topic is publishing ==="
-timeout 5 ros2 topic hz /camera/image_raw/compressed > "$LOGDIR/camera_check.log" 2>&1
-if [ -s "$LOGDIR/camera_check.log" ]; then
-    echo "Compressed camera confirmed flowing:"
-    tail -2 "$LOGDIR/camera_check.log"
+echo "=== HARD GATE: COMPRESSED camera must be publishing (/camera/image_raw/compressed) ==="
+CAM_RATE=$(timeout 5 ros2 topic hz /camera/image_raw/compressed 2>/dev/null | grep -oE 'average rate: [0-9.]+' | head -1 | grep -oE '[0-9.]+')
+if [ -n "$CAM_RATE" ]; then
+    echo "Compressed camera confirmed flowing: ${CAM_RATE} Hz"
 else
-    echo "!!! WARNING: no compressed frames on /camera/image_raw/compressed. Check camera.log. !!!"
+    echo "!!! CAMERA GATE FAILED: no frames on /camera/image_raw/compressed (Arducam Mode-2 stall?)."
+    echo "!!! A capture now would record 0 camera frames. Aborting bring-up."
+    echo "!!! FIX: run cam_preflight_gate.sh to check /dev/arducam; physically replug only if truly wedged."
+    teardown_partial
+    exit 1
 fi
 
 echo "=== Confirming the timestamp fix is LIVE (anchored capture clock) ==="
@@ -110,10 +132,11 @@ else
 fi
 
 echo ""
-echo "=== COMPRESSED BRINGUP DONE ==="
+echo "=== COMPRESSED BRINGUP DONE (both sensors gated GREEN) ==="
 echo "Camera topic : /camera/image_raw/compressed (native JPEG). RAW /image_raw is NOT published."
+echo "Camera device: /dev/arducam (udev-pinned)."
 echo "Debug nodes  : overlay/colorized fusion are OFF (they need raw /image_raw)."
-echo "Next step    : run capture_pointlio_texture.sh for the recorded capture."
+echo "Next step    : run point_lio_capture.sh  (records cloud + odom + imu + compressed cam)."
 echo ""
 echo "This window is keeping everything running. Use your Stop Rig icon to stop."
 rmdir "$LOCKDIR" 2>/dev/null
