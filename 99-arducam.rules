@@ -1,0 +1,16 @@
+# /etc/udev/rules.d/99-arducam.rules
+# Arducam B0578 2.3MP Global Shutter  —  Microdia  0c45:0578
+# ---------------------------------------------------------------------------
+# WHY: on 2026-09-27 the Arducam spontaneously re-enumerated on the USB bus
+# (/dev/video0 vanished, camera reappeared as /dev/video1) with NO physical
+# action. The capture pipeline was hard-pinned to /dev/video0, so it opened a
+# device that no longer existed -> 0 camera frames + node Exit 1 ("Mode-2 stall").
+#
+# FIX: pin a STABLE symlink /dev/arducam to the camera's VIDEO CAPTURE node by
+# its USB vendor:product. Then point the capture node at /dev/arducam and set
+# CAM_EXPECT=/dev/arducam in cam_preflight_gate.sh. A re-enum can no longer
+# orphan the pipeline — the symlink follows the device to whatever videoN it lands on.
+#
+# The ENV{ID_V4L_CAPABILITIES}=="*:capture:*" match keeps /dev/arducam OFF the
+# UVC metadata node (the second /dev/video* this camera exposes, which does not stream).
+SUBSYSTEM=="video4linux", ATTRS{idVendor}=="0c45", ATTRS{idProduct}=="0578", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", SYMLINK+="arducam", GROUP="video", MODE="0660"
