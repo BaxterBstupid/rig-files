@@ -7,6 +7,11 @@
 # WHY THIS EXISTS: on 2026-09-08 map_accumulator.py was missing from the Desktop -> the server
 # ran, /data answered 200, but coverage silently never accumulated (ModuleNotFoundError swallowed).
 # This check catches exactly that class of failure BEFORE launch, by comparing deployed vs. vault md5.
+#
+# 2026-09-28 (Master 20.13.72 triad-link): the COMPRESSED capture pipeline is now covered —
+#   rig_start_compressed.sh, rig_camera_compressed.py, cam_preflight_gate.sh added as CRITICAL.
+#   (Before, the check verified the LEAN pipeline + kiosk but was BLIND to the files that
+#    actually run the capture — a GREEN was false comfort.)
 
 VAULT="$HOME/rig_originals"
 MAN="$VAULT/originals_manifest.txt"
@@ -23,12 +28,17 @@ declare -A LIVE=(
   [rig_start_lean.sh]="$HOME/rig_start_lean.sh"
   [rig_stop.sh]="$HOME/rig_stop.sh"
   [restore_kiosk.sh]="$HOME/restore_kiosk.sh"
+  [rig_start_compressed.sh]="$HOME/rig_start_compressed.sh"
+  [rig_camera_compressed.py]="$HOME/rig_camera_compressed.py"
+  [cam_preflight_gate.sh]="$HOME/cam_preflight_gate.sh"
 )
 
-# Which files are MANDATORY for the coverage kiosk to work (RED = don't launch) vs advisory.
+# Which files are MANDATORY (RED = don't launch) vs advisory.
+# The COMPRESSED pipeline is mandatory: no camera node / no bring-up / no camera gate = no capture.
 declare -A CRITICAL=(
   [rig_kiosk_server.py]=1 [rig_kiosk.html]=1 [cloud.html]=1
   [launch.html]=1 [three.min.js]=1 [map_accumulator.py]=1
+  [rig_start_compressed.sh]=1 [rig_camera_compressed.py]=1 [cam_preflight_gate.sh]=1
 )
 
 if [ ! -f "$MAN" ]; then
