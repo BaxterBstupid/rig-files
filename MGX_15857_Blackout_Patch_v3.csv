@@ -1,0 +1,24 @@
+FIXTURE_NUMBER,ADDRESS,ADDRESS_FOR_LABELS,MANUFACTURER,FIXTURE_TYPE,DMX_FOOTPRINT,DESCRIPTION,MODE,LABEL,LABEL_COLOR
+1,1-8,1/001,Aputure,LS 600c Pro II (1),8,CCT + HSI 8 bit,Mode 3,600c Pro II 1,#5aaa8b
+2,9-16,1/009,Aputure,LS 600c Pro II (1),8,CCT + HSI 8 bit,Mode 3,600c Pro II 2,#5aaa8b
+3,17-24,1/017,Aputure,LS 600c Pro,8,CCT + HSI 8 bit,Mode 3,600c Pro 1,#5aaa8b
+4,25-32,1/025,Aputure,LS 600c Pro,8,CCT + HSI 8 bit,Mode 3,600c Pro 2,#5aaa8b
+5,33-46,1/033,Creamsource,Vortex8,14,16bit - CCT + HSI,Mode 8,Vortex 1,#4a90d9
+6,47-60,1/047,Creamsource,Vortex8,14,16bit - CCT + HSI,Mode 8,Vortex 2,#4a90d9
+7,61-74,1/061,Creamsource,Vortex8,14,16bit - CCT + HSI,Mode 8,Vortex 3,#4a90d9
+8,75-88,1/075,Creamsource,Vortex8,14,16bit - CCT + HSI,Mode 8,Vortex 4,#4a90d9
+9,89-102,1/089,Creamsource,Vortex8,14,16bit - CCT + HSI,Mode 8,Vortex 5,#4a90d9
+10,103-116,1/103,Creamsource,Vortex8,14,16bit - CCT + HSI,Mode 8,Vortex 6,#4a90d9
+11,117-122,1/117,Astera,Titan Tube,6,RGB CCT DIM IND - Strobe Off,Mode 7,Astera 1,#c05bd6
+12,123-128,1/123,Astera,Titan Tube,6,RGB CCT DIM IND - Strobe Off,Mode 7,Astera 2,#c05bd6
+13,129-134,1/129,Astera,Titan Tube,6,RGB CCT DIM IND - Strobe Off,Mode 7,Astera 3,#c05bd6
+14,135-140,1/135,Astera,Titan Tube,6,RGB CCT DIM IND - Strobe Off,Mode 7,Astera 4,#c05bd6
+15,141-146,1/141,Astera,Titan Tube,6,RGB CCT DIM IND - Strobe Off,Mode 7,Astera 5,#c05bd6
+16,147-152,1/147,Astera,Titan Tube,6,RGB CCT DIM IND - Strobe Off,Mode 7,Astera 6,#c05bd6
+17,153-158,1/153,Astera,Titan Tube,6,RGB CCT DIM IND - Strobe Off,Mode 7,Astera 7,#c05bd6
+18,159-164,1/159,Astera,Titan Tube,6,RGB CCT DIM IND - Strobe Off,Mode 7,Astera 8,#c05bd6
+19,165-182,1/165,LiteGear,LiteMat Spectrum 2 (2023),18,CCT RGB 16bit | OS3,Mode 21,LiteMat4 Gen2 1,#e0a030
+20,183-200,1/183,LiteGear,LiteMat Spectrum 2 (2023),18,CCT RGB 16bit | OS3,Mode 21,LiteMat4 Gen2 2,#e0a030
+21,201-218,1/201,LiteGear,LiteMat Spectrum 2 (2023),18,CCT RGB 16bit | OS3,Mode 21,LiteMat2L 1,#e0a030
+22,219-236,1/219,LiteGear,LiteMat Spectrum 2 (2023),18,CCT RGB 16bit | OS3,Mode 21,LiteMat4 1,#e0a030
+23,237-254,1/237,LiteGear,LiteMat Spectrum 2 (2023),18,CCT RGB 16bit | OS3,Mode 21,LiteMat4 2,#e0a030
