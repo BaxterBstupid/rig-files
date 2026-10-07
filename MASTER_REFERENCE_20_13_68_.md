@@ -30,7 +30,7 @@
 #  ⭐ NEXT STEP — CLEAN CAPTURE WITH FIXED ODOMETRY AND COMPRESSED FRAMES  ⭐
 ═══════════════════════════════════════════════════════════════════════════
 ═══════════════════════════════════════════════════════════════════════════
-
+FOX
 **The whole project now turns on ONE capture.** Off-rig work is done and proven; the
 deliverable has never been produced because every capture has failed on one of two
 things at the rig. Both are now fixed in code and waiting to be run:
