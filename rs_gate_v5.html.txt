@@ -1,0 +1,10 @@
+﻿$Using( "RealityScan.Report.ProjectInformationExportFunctionSet" )
+$Using( "RealityScan.Report.IteratorsFunctionSet" )
+$Using( "RealityScan.Report.ComponentFunctionSet" )
+$Using( "RealityScan.Report.SfmExportFunctionSet" )
+RSGATE|v5|$(dateTime)
+$IterateComponents(COMP|$(componentName)|$(componentCamerasCount)|$ComponentInfo(componentGUID,$(componentPointCount)|$(componentControlPointCountUsed))|$ComponentStats(componentGUID,$(componentMeanError)|$(componentMedianError)|$(componentMaximalError)|$(componentIsGeoreferenced)|$(componentMetric))
+)
+$ExportCameras(CAM|$(imageName).$(imageExt)|$(x)|$(y)|$(z)|$(priorError3D)|$(f)
+)
+END
