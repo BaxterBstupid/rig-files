@@ -1,0 +1,126 @@
+@echo off
+REM rs_merge.cmd  v2 -- RealityScan 2.2 photo+LiDAR merge, HEADLESS, STAGED, REPORTED.  (Master 20.13.79 reference section 3, as a script)
+REM One command per stage. Every stage saves its own .rsproj and writes a machine-readable report (rs_gate.html template);
+REM rs_gate.py turns the report into PASS/FAIL. No screenshots, no clicking through components.
+REM
+REM   rs_merge.cmd <bundle_dir> <out_dir> <stage>
+REM   stages:  check    verify RealityScan.exe, python, template, params files, bundle contents (nothing is run)
+REM            report   write the gate report for the project named in RS_PROJ (read-only)
+REM            align    S1: new scene, photos only (XMP priors), align ONCE, report, save S1_align.rsproj
+REM            lidar    S2: load S1, import cloud_color.ply (lidar_import_fromcomponent.xml), lock photos, align ONCE, report, save
+REM            merge    S3: load S2, import control-point measurements (cps.cpm in out_dir), Merge Components, report, align ONCE, report, save
+REM            mesh     S4: load S3, select maximal component, region auto, Normal mesh, texture, export FBX, report, save
+REM
+REM Files beside this script:  rs_gate.html (report template), rs_gate.py (gate),
+REM   lidar_import_fromcomponent.xml  = exported ONCE from the LiDAR Scan Import dialog with: Mobile LiDAR, Exact, Georeferenced No,
+REM                                     Color, Use camera poses = From component   (the documented way to make params.xml)
+REM   lidar_import_frompriors.xml     = same dialog, Use camera poses = From camera pose priors (fallback if the S1 frame check fails)
+REM Env:  set RS_PROJ=...rsproj  (only for the 'report' stage)
+REM v2: goto-structured (errorlevel inside if-blocks was unreliable), check stage, appQuitOnError, selectComponent before lock, FBX export.
+
+setlocal
+set "RS=C:\Program Files\Epic Games\RealityScan\RealityScan.exe"
+set "B=%~1"
+set "O=%~2"
+set "STAGE=%~3"
+set "HERE=%~dp0"
+set "T=%HERE%rs_gate.html"
+set "GATE=%HERE%rs_gate.py"
+set "PXC=%HERE%lidar_import_fromcomponent.xml"
+if "%STAGE%"=="" goto usage
+if not exist "%O%" mkdir "%O%"
+echo === rs_merge v2  stage=%STAGE%  bundle=%B%  out=%O%
+if /i "%STAGE%"=="check"  goto check
+if /i "%STAGE%"=="report" goto report
+if /i "%STAGE%"=="align"  goto align
+if /i "%STAGE%"=="lidar"  goto lidar
+if /i "%STAGE%"=="merge"  goto merge
+if /i "%STAGE%"=="mesh"   goto mesh
+echo unknown stage "%STAGE%"
+goto usage
+
+:check
+set "RC=0"
+if exist "%RS%" (echo [ok]   RealityScan.exe) else (echo [FAIL] RealityScan.exe not at "%RS%" & set "RC=1")
+if exist "%T%" (echo [ok]   template %T%) else (echo [FAIL] missing %T% & set "RC=1")
+if exist "%GATE%" (echo [ok]   gate %GATE%) else (echo [FAIL] missing %GATE% & set "RC=1")
+if exist "%PXC%" (echo [ok]   %PXC%) else (echo [WARN] missing %PXC%  -- needed for the lidar stage; export it from the LiDAR Scan Import dialog)
+if exist "%B%\images\*.jpg" (echo [ok]   bundle images) else (echo [FAIL] no jpg in %B%\images & set "RC=1")
+if exist "%B%\cloud_color.ply" (echo [ok]   bundle cloud_color.ply) else (echo [FAIL] missing %B%\cloud_color.ply & set "RC=1")
+python --version >nul 2>&1 && (echo [ok]   python) || (echo [FAIL] python not on PATH -- run from the rigstation Anaconda Prompt & set "RC=1")
+python "%GATE%" --selftest && (echo [ok]   rs_gate selftest) || (echo [FAIL] rs_gate selftest & set "RC=1")
+echo check done, rc=%RC%
+exit /b %RC%
+
+:report
+if "%RS_PROJ%"=="" (echo set RS_PROJ=path\to\project.rsproj first & exit /b 2)
+if not exist "%RS_PROJ%" (echo project not found: "%RS_PROJ%" & exit /b 2)
+"%RS%" -headless -set "appQuitOnError=true" -load "%RS_PROJ%" -exportReport "%O%\S0_report.html" "%T%" -quit
+python "%GATE%" "%O%\S0_report.html" --stage report --images "%B%\images"
+exit /b %errorlevel%
+
+:align
+"%RS%" -headless -set "appQuitOnError=true" -newScene ^
+  -set "sfmMaxFeatureReprojectionError=3" ^
+  -set "sfmEnableCameraPrior=true" ^
+  -set "sfmMergeGeoreferencedComponents=false" ^
+  -set "sfmForceComponentRematch=false" ^
+  -addFolder "%B%\images" ^
+  -align ^
+  -selectMaximalComponent ^
+  -exportReport "%O%\S1_align.html" "%T%" ^
+  -save "%O%\S1_align.rsproj" -quit
+python "%GATE%" "%O%\S1_align.html" --stage align --images "%B%\images"
+exit /b %errorlevel%
+
+:lidar
+if not exist "%PXC%" (echo missing %PXC% -- export it from the LiDAR Scan Import dialog first & exit /b 2)
+if not exist "%O%\S1_align.rsproj" (echo missing %O%\S1_align.rsproj -- run the align stage first & exit /b 2)
+"%RS%" -headless -set "appQuitOnError=true" -load "%O%\S1_align.rsproj" ^
+  -selectMaximalComponent ^
+  -importLaserScan "%B%\cloud_color.ply" "%PXC%" ^
+  -exportReport "%O%\S2a_imported.html" "%T%" ^
+  -selectComponent "Component 0" ^
+  -selectImage ".*\.jpg" set ^
+  -lockPoseForContinue true ^
+  -deselectAllImages ^
+  -align ^
+  -exportReport "%O%\S2_lidar.html" "%T%" ^
+  -save "%O%\S2_lidar.rsproj" -quit
+python "%GATE%" "%O%\S2a_imported.html" --stage lidar --images "%B%\images" --label "after import, before align"
+python "%GATE%" "%O%\S2_lidar.html" --stage lidar --images "%B%\images" --label "after align"
+exit /b %errorlevel%
+
+:merge
+if not exist "%O%\cps.cpm" (echo missing %O%\cps.cpm  -- control-point measurements: export from the GUI or make with cp_make.py & exit /b 2)
+if not exist "%O%\S2_lidar.rsproj" (echo missing %O%\S2_lidar.rsproj -- run the lidar stage first & exit /b 2)
+"%RS%" -headless -set "appQuitOnError=true" -load "%O%\S2_lidar.rsproj" ^
+  -importControlPointsMeasurements "%O%\cps.cpm" ^
+  -mergeComponents ^
+  -exportReport "%O%\S3a_mergetool.html" "%T%" ^
+  -align ^
+  -exportReport "%O%\S3_merge.html" "%T%" ^
+  -save "%O%\S3_merge.rsproj" -quit
+python "%GATE%" "%O%\S3a_mergetool.html" --stage merge --images "%B%\images" --label "after Merge Components"
+python "%GATE%" "%O%\S3_merge.html" --stage merge --images "%B%\images" --label "after align"
+exit /b %errorlevel%
+
+:mesh
+if not exist "%O%\S3_merge.rsproj" (echo missing %O%\S3_merge.rsproj -- run the merge stage first & exit /b 2)
+"%RS%" -headless -set "appQuitOnError=true" -load "%O%\S3_merge.rsproj" ^
+  -selectMaximalComponent ^
+  -set "mvsDefaultGroupingFactor=2.0" ^
+  -setReconstructionRegionAuto ^
+  -calculateNormalModel ^
+  -set "MvsDoCorrectColors=true" ^
+  -set "unwrapStyle=AdaptiveTexelSize" -set "unwrapMaxTexResolution=16384" ^
+  -unwrap -calculateTexture ^
+  -exportSelectedModel "%O%\S4_room.fbx" ^
+  -exportReport "%O%\S4_mesh.html" "%T%" ^
+  -save "%O%\S4_mesh.rsproj" -quit
+python "%GATE%" "%O%\S4_mesh.html" --stage mesh --images "%B%\images"
+exit /b %errorlevel%
+
+:usage
+echo usage: rs_merge.cmd ^<bundle_dir^> ^<out_dir^> ^<check^|report^|align^|lidar^|merge^|mesh^>
+exit /b 2

@@ -1,0 +1,6 @@
+RSGATE|v1|$(dateTime)
+$IterateComponents(COMP|$(componentName)|$(componentCamerasCount)|$ComponentInfo($(componentGUID),$(componentPointCount)|$(componentControlPointCountUsed))|$ComponentStats($(componentGUID),$(componentMeanError)|$(componentMedianError)|$(componentMaximalError)|$(componentIsGeoreferenced)|$(componentMetric))
+)
+$ExportCameras(CAM|$(imageName)|$(x)|$(y)|$(z)|$(priorError3D)|$(f)
+)
+END
