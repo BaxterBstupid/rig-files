@@ -77,7 +77,7 @@ Prior-session tools still canonical: `rig_start_compressed.sh` (`10b2bb66…`) +
 pan; `pointlio_pose_matcher.py` v2 (`6827341d…`) as the pose-math source of truth.
 
 ## WHAT IS NOW CLOSED vs STILL OPEN
-
+FOX
 - **CLOSED:** compressed capture + moving-odom (proven on hardware); the anchor→colour
   fusion (a real full-ring image); the EXTRINSIC's real-world certification (colour lands
   on geometry across 306°). Master 20.13.68's entire "NEXT STEP: clean capture" premise is
