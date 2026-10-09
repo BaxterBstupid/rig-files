@@ -1,0 +1,5 @@
+﻿$Using( "RealityScan.Report.SfmExportFunctionSet" )
+RSDIMS|$(dateTime)
+$ExportCameras(DIM|$(imageName)$(imageExt)|$(width)|$(height)|$(f)|$(px)|$(py)
+)
+END
